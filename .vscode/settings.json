@@ -1,0 +1,18 @@
+{
+    "python.analysis.exclude": [
+        "**/.venv/**",
+        "**/__pycache__/**",
+        "**/bagel_example/**",  // 替换为你的数据集文件夹名
+        "**/data/**",
+        "**/results/**",
+        "**/datasets/**",
+        "**/wandb/**"
+    ],
+    "files.watcherExclude": {
+        "**/bagel_example/**": true,  // 排除文件监视
+        "**/data/**": true,
+        "**/results/**": true,
+        "**/datasets/**": true,
+        "**/wandb/**": true
+    }
+}

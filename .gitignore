@@ -1,0 +1,6 @@
+models/*
+datasets/*
+results/
+transformers-4.54.0/*
+trl/*
+**/__pycache__/

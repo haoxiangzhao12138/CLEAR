@@ -1,0 +1,22 @@
+{
+    "model": {
+        "BAGEL": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "image",
+            "max_think_token_n": 256,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "MMVP": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP"
+        },
+        "MMVet": {
+            "class": "MMVet",
+            "dataset": "MMVet"
+        }
+    }
+}
