@@ -10,13 +10,9 @@
         }
     },
     "data": {
-        "MMVP": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMVP"
-        },
-        "MMVet": {
-            "class": "MMVet",
-            "dataset": "MMVet"
+        "MMMU": {
+            "class": "MMMUDataset",
+            "dataset": "MMMU_DEV_VAL"
         }
     }
 }
