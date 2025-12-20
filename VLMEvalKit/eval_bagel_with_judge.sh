@@ -2,18 +2,19 @@
 
 # export your openai api key
 export OPENAI_API_KEY="sk-zSaDTLLv9cSEwRRt9oLhmMMNpFidKy4cGEtogaICub4mFw67"
-export OPENAI_API_BASE="http://yy.dbh.baidu-int.com/v1"
+export OPENAI_API_BASE="http://yy.dbh.baidu-int.com/"
 
 # 记录开始时间
 start_time=$(date +%s)
 
+# ["chatgpt-0125", "exact_matching", "gpt-4-0125", "deepseek"]
 
 torchrun \
     --nproc-per-node=8 \
     --master_port=29503 \
     run.py \
     --config ./eval_cfg/origin_bagel.json \
-    --judge deepseek \
+    # --judge gpt-4-0125 \
     --verbose \
 
 

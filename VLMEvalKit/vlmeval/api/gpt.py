@@ -10,6 +10,7 @@ APIBASES = {
 
 def GPT_context_window(model):
     length_map = {
+        'gpt-4.1':128000,
         'gpt-4': 8192,
         'gpt-4-0613': 8192,
         'gpt-4-turbo-preview': 128000,

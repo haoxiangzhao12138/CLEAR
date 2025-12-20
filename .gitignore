@@ -5,3 +5,4 @@ transformers-4.54.0/*
 trl/*
 **/__pycache__/
 **/outputs/*
+VLMEvalKit/outputs/*

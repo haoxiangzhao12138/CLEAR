@@ -12,7 +12,7 @@ torchrun \
   --master_addr=127.0.0.1 \
   --master_port=23457 \
   train/pretrain_unified_depth.py \
-  --dataset_config_file ./data/configs/dense_predict_mix.yaml \
+  --dataset_config_file ./data/configs/low_level_mix.yaml \
   --checkpoint_dir "./results/${run_id}" \
   --model_path ./models/BAGEL-7B-MoT \
   --layer_module Qwen2MoTDecoderLayer \

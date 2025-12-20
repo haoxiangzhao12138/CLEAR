@@ -4,15 +4,44 @@
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "../models/BAGEL-7B-MoT",
-            "reasoning_mode": "image",
+            "reasoning_mode": "text",
             "max_think_token_n": 256,
             "is_ema": true
         }
     },
     "data": {
+        "MME": {
+            "class": "ImageYORNDataset",
+            "dataset": "MME"
+        },
+        "MMBench": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11"
+        },
         "MMMU": {
             "class": "MMMUDataset",
             "dataset": "MMMU_DEV_VAL"
+        },
+        "MMVet": {
+            "class": "MMVet",
+            "dataset": "MMVet"
+        },
+        "MathVista": {
+            "class": "MathVista",
+            "dataset": "MathVista_MINI"
+        },
+        "MMVP": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP"
+        },
+        "BLINK": {
+            "class": "ImageMCQDataset",
+            "dataset": "BLINK"
+        },
+        "CVBench": {
+            "class": "CVBench",
+            "dataset": "CVBench-2D"
         }
+
     }
 }
