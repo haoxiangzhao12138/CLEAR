@@ -1,18 +1,18 @@
 {
     "model": {
-        "Qwen2VLChat": {
+        "BAGEL": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "../models/BAGEL-7B-MoT",
-            "reasoning_mode": "image",
-            "max_think_token_n": 256,
+            "reasoning_mode": "text",
+            "is_thinking": true,
             "is_ema": true
         }
     },
     "data": {
-        "MMVP": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMVP"
+        "MME": {
+            "class": "ImageYORNDataset",
+            "dataset": "MME"
         }
     }
 }

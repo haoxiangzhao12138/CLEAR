@@ -5,7 +5,7 @@
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "../models/BAGEL-7B-MoT",
             "reasoning_mode": "text",
-            "max_think_token_n": 256,
+            "is_thinking": false,
             "is_ema": true
         }
     },

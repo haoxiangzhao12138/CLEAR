@@ -115,7 +115,7 @@ class BagelInference(BaseModel):
         reasoning_mode: str,  # text, image, interleave
         is_thinking: bool = True,
         max_inter_num=3,
-        max_think_token_n: int = 2048,
+        max_think_token_n: int = 4096,
         max_new_tokns: int = 1024,
         is_ema: bool = False,  # the model save type, if sft, then use ema model, if rl, then use not ema model
         visual_gen: bool = True,

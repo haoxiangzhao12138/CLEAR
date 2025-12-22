@@ -1,1 +1,0 @@
-/root/COOPER/VLMEvalKit/./outputs/BAGEL/T20251219_G25df3d05/BAGEL_MMVP_deepseek_result.pkl
