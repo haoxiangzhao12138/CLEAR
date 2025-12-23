@@ -14,11 +14,11 @@
             "class": "ImageYORNDataset",
             "dataset": "MME"
         },
-        "MMBench": {
+        "MMBench_DEV_EN_V11": {
             "class": "ImageMCQDataset",
             "dataset": "MMBench_DEV_EN_V11"
         },
-        "MMMU": {
+        "MMMU_DEV_VAL": {
             "class": "MMMUDataset",
             "dataset": "MMMU_DEV_VAL"
         },
@@ -26,7 +26,7 @@
             "class": "MMVet",
             "dataset": "MMVet"
         },
-        "MathVista": {
+        "MathVista_MINI": {
             "class": "MathVista",
             "dataset": "MathVista_MINI"
         },
@@ -38,9 +38,9 @@
             "class": "ImageMCQDataset",
             "dataset": "BLINK"
         },
-        "CVBench": {
+        "CV-Bench-2D": {
             "class": "CVBench",
-            "dataset": "CVBench-2D"
+            "dataset": "CV-Bench-2D"
         }
 
     }

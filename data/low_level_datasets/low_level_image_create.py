@@ -1,56 +1,63 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import os
+import argparse
+import base64
+import io
 import math
 import random
-import argparse
-from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
-
-import cv2
+import glob
+import pandas as pd
 import numpy as np
+import cv2
 from PIL import Image
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import sys
+import csv
 
 # -----------------------------
-# Configuration (High Level Only)
+# 1. 图像处理配置
 # -----------------------------
 CONFIG = {
-    "motion_blur": {"ksize": 15},                # High
-    "pepper":      0.15,                         # High
-    "mask":        {"block_size": 12, "mask_ratio": 0.30}, # High
-    "darken":      0.40                          # High (retain 40% brightness)
+    "motion_blur": {"ksize": 15},                
+    "pepper":      0.15,                         
+    "mask":        {"block_size": 12, "mask_ratio": 0.30}, 
+    "darken":      0.30                          
 }
 
+# 增加 CSV 字段长度限制，防止 Base64 过长报错
+csv.field_size_limit(sys.maxsize)
+
 # -----------------------------
-# Utils
+# 2. 编解码工具
 # -----------------------------
-def load_image(path: Path) -> np.ndarray:
+def encode_image_to_base64(img, target_size=-1, fmt='JPEG'):
+    if img.mode in ('RGBA', 'P', 'LA'):
+        img = img.convert('RGB')
+    if target_size > 0:
+        img.thumbnail((target_size, target_size))
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format=fmt)
+    image_data = img_buffer.getvalue()
+    ret = base64.b64encode(image_data).decode('utf-8')
+    return ret
+
+def decode_base64_to_image(base64_string, target_size=-1):
     try:
-        with Image.open(path) as img:
-            return np.array(img.convert("RGB"))
-    except Exception as e:
-        print(f"Error loading {path}: {e}")
+        if pd.isna(base64_string) or base64_string == "":
+            return None
+        image_data = base64.b64decode(base64_string)
+        image = Image.open(io.BytesIO(image_data))
+        if image.mode in ('RGBA', 'P'):
+            image = image.convert('RGB')
+        if target_size > 0:
+            image.thumbnail((target_size, target_size))
+        return image
+    except Exception:
         return None
 
-def save_image(path: Path, img_uint8: np.ndarray, skip_exist: bool = True):
-    if skip_exist and path.exists():
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(img_uint8).save(str(path))
-
-def list_images(root: Path, exts):
-    files = []
-    for ext in exts:
-        files.extend(root.rglob(f"*{ext.lower()}"))
-        files.extend(root.rglob(f"*{ext.upper()}"))
-    return sorted(set(files))
-
 # -----------------------------
-# Degradation Ops
+# 3. 图像退化算法
 # -----------------------------
-
 def _motion_kernel(ksize, angle_deg):
     ker = np.zeros((ksize, ksize), np.float32)
     c = ksize // 2
@@ -105,107 +112,127 @@ def add_darken(img_u8, factor):
     out = np.clip((img_u8.astype(np.float32) / 255.0) * f, 0.0, 1.0)
     return (out * 255.0 + 0.5).astype(np.uint8)
 
-# -----------------------------
-# Processing Pipeline
-# -----------------------------
-def process_one(img_path: Path, in_root: Path, out_root: Path, skip_exist: bool):
-    rel = img_path.relative_to(in_root) if in_root else Path(img_path.name)
-    save_path = out_root / rel
+def apply_random_degradation(pil_img, seed=None):
+    if pil_img is None:
+        return None
+    img_np = np.array(pil_img)
     
-    if skip_exist and save_path.exists():
-        return
-
-    img = load_image(img_path)
-    if img is None:
-        return
-
-    # -------------------------------------------------
-    # 随机选择一种退化 (Random Choice)
-    # -------------------------------------------------
+    # 设置随机种子，保证可复现
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        
     options = ["motion_blur", "darken", "pepper", "mask"]
     choice = random.choice(options)
-
+    
     if choice == "motion_blur":
-        img = add_motion_blur(img, CONFIG["motion_blur"]["ksize"])
-    
+        img_np = add_motion_blur(img_np, CONFIG["motion_blur"]["ksize"])
     elif choice == "darken":
-        img = add_darken(img, CONFIG["darken"])
-    
+        img_np = add_darken(img_np, CONFIG["darken"])
     elif choice == "pepper":
-        img = add_pepper_noise(img, CONFIG["pepper"])
-        
+        img_np = add_pepper_noise(img_np, CONFIG["pepper"])
     elif choice == "mask":
-        img = random_mask_blocks(img, **CONFIG["mask"])
-
-    # 保存
-    save_image(save_path, img, skip_exist=False)
-
-# -----------------------------
-# Worker
-# -----------------------------
-def _worker(p_str, in_root_str, out_root_str, seed=None, skip_exist=True):
-    try:
-        try:
-            cv2.setNumThreads(1)
-        except Exception:
-            pass
-        if seed is not None:
-            # 这里的 random.seed 保证了同一张图片如果多次运行（且种子相同），
-            # 每次都会随机选中同一种退化方式，便于实验复现。
-            random.seed(seed ^ (hash(p_str) & 0xFFFFFFFF))
-            np.random.seed(seed ^ (hash((p_str, "np")) & 0xFFFFFFFF))
-            
-        in_root  = Path(in_root_str) if in_root_str else None
-        out_root = Path(out_root_str)
+        img_np = random_mask_blocks(img_np, **CONFIG["mask"])
         
-        process_one(Path(p_str), in_root, out_root, skip_exist=skip_exist)
-        return (True, p_str, "")
+    return Image.fromarray(img_np)
+
+# -----------------------------
+# 4. Worker (纯内存处理)
+# -----------------------------
+def process_single_base64(index, original_b64, seed_base):
+    """
+    输入: index, base64字符串
+    输出: (index, new_base64_string)
+    """
+    try:
+        # 解码
+        img = decode_base64_to_image(original_b64)
+        if img is None:
+            return index, original_b64 # 失败则返回原图
+
+        # 处理
+        item_seed = seed_base + int(index) if seed_base else None
+        processed_img = apply_random_degradation(img, seed=item_seed)
+
+        # 编码
+        new_b64 = encode_image_to_base64(processed_img)
+        return index, new_b64
+
+    except Exception:
+        # 如果出错，返回原始数据，保证程序不崩且数据不丢
+        return index, original_b64
+
+# -----------------------------
+# 5. 主逻辑
+# -----------------------------
+def process_tsv(tsv_path, seed):
+    filename = os.path.basename(tsv_path)
+    print(f"Processing: {filename}")
+    
+    try:
+        df = pd.read_csv(tsv_path, sep='\t')
     except Exception as e:
-        return (False, p_str, str(e))
-
-# -----------------------------
-# Main
-# -----------------------------
-def main():
-    ap = argparse.ArgumentParser("Generate Randomly Selected High-Level Degraded Images")
-    ap.add_argument("--input_dir", type=str, default="/home/haoxiangzhao/Bagel/datasets/mme/origin",
-                    help="Input origin directory")
-    ap.add_argument("--output", type=str, default="/home/haoxiangzhao/Bagel/datasets/mme/mixed_random_high",
-                    help="Output directory")
-    ap.add_argument("--exts", type=str, nargs="+", default=[".jpg",".jpeg",".png"])
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--workers", type=int, default=-1)
-    ap.add_argument("--skip_exist", action="store_true", default=True)
-    args = ap.parse_args()
-
-    in_root = Path(args.input_dir)
-    out_root = Path(args.output)
-    
-    if not in_root.exists():
-        raise FileNotFoundError(f"input_dir not found: {in_root}")
-    
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    files = list_images(in_root, args.exts)
-    if not files:
-        print("[WARN] no images found in", in_root)
+        print(f"  [Error] Cannot read {filename}: {e}")
         return
 
-    num_workers = os.cpu_count() if args.workers in (-1, 0, None) else max(1, int(args.workers))
+    if 'image' not in df.columns:
+        print(f"  [Skip] No 'image' column in {filename}")
+        return
 
-    print(f"Start processing {len(files)} images...")
-    print(f"Mode: Randomly select ONE from [Motion, Darken, Pepper, Mask] (High Level)")
-    print(f"Output: {out_root}")
-
-    with ProcessPoolExecutor(max_workers=num_workers) as ex:
-        futs = [ex.submit(_worker, str(p), str(in_root), str(out_root), args.seed, args.skip_exist) for p in files]
+    # 并行处理
+    results = {}
+    with ProcessPoolExecutor() as executor:
+        # 提交任务
+        futures = {
+            executor.submit(process_single_base64, row['index'], row['image'], seed): row['index']
+            for _, row in df.iterrows()
+        }
         
-        for f in tqdm(as_completed(futs), total=len(futs), desc=f"Processing"):
-            ok, path_str, err = f.result()
-            if not ok:
-                print(f"[WARN] Failed on {path_str}: {err}")
+        # 进度条
+        for future in tqdm(as_completed(futures), total=len(futures), desc="  Rows"):
+            idx, new_b64 = future.result()
+            results[idx] = new_b64
 
-    print(f"[DONE] Output saved to {out_root}")
+    # 更新 DataFrame (只更新 image 列)
+    # 保持原来的顺序
+    new_image_col = []
+    for _, row in df.iterrows():
+        idx = row['index']
+        # 获取新结果，如果没在results里(理论上不可能)则用原值
+        new_image_col.append(results.get(idx, row['image']))
+
+    df['image'] = new_image_col
+
+    # 保存为 _LOW_LEVEL.tsv
+    name_no_ext = os.path.splitext(tsv_path)[0]
+    new_path = f"{name_no_ext}_LOW_LEVEL.tsv"
+    
+    # 关键: index=False (不加行号), sep='\t' (保持TSV)
+    df.to_csv(new_path, sep='\t', index=False)
+    print(f"  [Done] Saved to: {new_path}")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", type=str, default="/root/LMUData", help="Directory containing original .tsv files")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.input_dir):
+        print(f"Error: {args.input_dir} does not exist.")
+        return
+
+    # 扫描目录下所有的 .tsv 文件 (排除已经是 _LOW_LEVEL 的文件，防止重复处理)
+    all_tsvs = glob.glob(os.path.join(args.input_dir, "*.tsv"))
+    target_tsvs = [f for f in all_tsvs if "_LOW_LEVEL.tsv" not in f]
+
+    if not target_tsvs:
+        print("No .tsv files found.")
+        return
+
+    print(f"Found {len(target_tsvs)} files to process.")
+    for tsv_path in target_tsvs:
+        process_tsv(tsv_path, args.seed)
+        print("-" * 40)
 
 if __name__ == "__main__":
     main()

@@ -56,6 +56,7 @@ class ImageMCQDataset(ImageBaseDataset):
         "MMBench_CN": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_CN.tsv",  # Internal
         # MMBench v1.1
         "MMBench_DEV_EN_V11": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_EN_V11.tsv",
+        "MMBench_DEV_EN_V11_LOW_LEVEL":"/root/LMUData/MMBench_DEV_EN_V11_LOW_LEVEL.tsv",
         "MMBench_TEST_EN_V11": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_TEST_EN_V11.tsv",
         "MMBench_DEV_CN_V11": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_CN_V11.tsv",
         "MMBench_TEST_CN_V11": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_TEST_CN_V11.tsv",
@@ -93,6 +94,7 @@ class ImageMCQDataset(ImageBaseDataset):
         "RealWorldQA": "https://opencompass.openxlab.space/utils/VLMEval/RealWorldQA.tsv",
         "MLLMGuard_DS": "https://opencompass.openxlab.space/utils/VLMEval/MLLMGuard_DS.tsv",
         "BLINK": "https://opencompass.openxlab.space/utils/VLMEval/BLINK.tsv",
+        "BLINK_LOW_LEVEL": "/root/LMUData/BLINK_LOW_LEVEL.tsv",
         "TaskMeAnything_v1_imageqa_random": (
             "https://huggingface.co/datasets/weikaih/TaskMeAnything-v1-imageqa-random/"
             "resolve/main/TaskMeAnything-v1-imageqa-random.tsv"
@@ -110,6 +112,7 @@ class ImageMCQDataset(ImageBaseDataset):
         "MMCR": "http://opencompass.openxlab.space/utils/VLMEval/MMCR.tsv",
         "MMSci_DEV_MCQ": "https://opencompass.openxlab.space/utils/VLMEval/MMSci_DEV_MCQ.tsv",
         "MMVP": "http://opencompass.openxlab.space/utils/VLMEval/MMVP.tsv",
+        "MMVP_LOW_LEVEL": "/root/LMUData/MMVP_LOW_LEVEL.tsv",
         # For Internal Use Only
         "MMBench_V11_MINI": "https://opencompass.openxlab.space/utils/TEST/MMBench_V11_MINI.tsv",
         "MMStar_MINI": "https://opencompass.openxlab.space/utils/TEST/MMStar_MINI.tsv",
@@ -344,6 +347,7 @@ class MMMUDataset(ImageMCQDataset):
     DATASET_URL = {
         "MMMU_DEV_VAL": "https://opencompass.openxlab.space/utils/VLMEval/MMMU_DEV_VAL.tsv",
         "MMMU_TEST": "https://opencompass.openxlab.space/utils/VLMEval/MMMU_TEST.tsv",
+        "MMMU_DEV_VAL_LOW_LEVEL":"/root/LMUData/MMMU_DEV_VAL_LOW_LEVEL.tsv"
     }
 
     DATASET_MD5 = {
@@ -1399,6 +1403,7 @@ class CVBench(ImageMCQDataset):
     DATASET_URL = {
         "CV-Bench-2D": "http://opencompass.openxlab.space/utils/VLMEval/CV-Bench-2D.tsv",
         "CV-Bench-3D": "http://opencompass.openxlab.space/utils/VLMEval/CV-Bench-3D.tsv",
+        "CV-Bench-2D_LOW_LEVEL": "/root/LMUData/CV-Bench-2D_LOW_LEVEL.tsv",
     }
 
     DATASET_MD5 = {

@@ -10,6 +10,7 @@ class ImageYORNDataset(ImageBaseDataset):
 
     DATASET_URL = {
         'MME': 'https://opencompass.openxlab.space/utils/VLMEval/MME.tsv',
+        'MME_LOW_LEVEL': '/root/LMUData/MME_LOW_LEVEL.tsv',
         'HallusionBench': 'https://opencompass.openxlab.space/utils/VLMEval/HallusionBench.tsv',
         'POPE': 'https://opencompass.openxlab.space/utils/VLMEval/POPE.tsv',
         'AMBER': 'https://huggingface.co/datasets/yifanzhang114/AMBER_base64/resolve/main/AMBER.tsv',

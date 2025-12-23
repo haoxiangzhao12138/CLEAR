@@ -11,6 +11,7 @@ torchrun \
     --master_port=29503 \
     run.py \
     --config ./config/test.json \
+    --judge gpt-4-0125 \
     --verbose
 
 # 记录结束时间
