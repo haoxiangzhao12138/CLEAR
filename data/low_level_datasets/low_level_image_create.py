@@ -13,249 +13,266 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import sys
 import csv
 import ast
+import traceback
+import hashlib
+import time
 
 # -----------------------------
-# 1. 图像处理配置
+# 配置与初始化
 # -----------------------------
-CONFIG = {
-    "motion_blur": {"ksize": 15},                
-    "pepper":      0.15,                         
-    "mask":        {"block_size": 12, "mask_ratio": 0.30}, 
-    "darken":      0.30                          
-}
 
-# 增加 CSV 字段长度限制，防止超大 Base64 报错
+# 增加 CSV 字段长度限制
 try:
     csv.field_size_limit(sys.maxsize)
 except OverflowError:
     csv.field_size_limit(2147483647)
 
 # -----------------------------
-# 2. 基础编解码工具
+# 基础工具函数
 # -----------------------------
+
 def pil_to_b64(img, quality=95):
-    """将 PIL 图片转为 Base64 字符串"""
+    """
+    将 PIL Image 转换为纯 Base64 字符串。
+    
+    关键调整：
+    1. quality=75 (默认值)，解决文件体积过大问题。
+    2. 无前缀。
+    """
     if img.mode in ('RGBA', 'P', 'LA'):
         img = img.convert('RGB')
     img_buffer = io.BytesIO()
+    # JPEG 压缩，quality=75 是平衡体积和画质的最佳点
     img.save(img_buffer, format='JPEG', quality=quality)
-    return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+    b64_data = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+    # 移除换行符
+    return b64_data.replace("\n", "")
 
 def b64_to_pil(b64_str):
-    """将单个 Base64 字符串转为 PIL 图片"""
+    """
+    将 Base64 字符串转换为 PIL Image。
+    """
+    if not b64_str or pd.isna(b64_str): return None
+    
+    b64_str = str(b64_str).strip()
+    
+    # 清理引号（兼容处理）
+    if b64_str.startswith("'") and b64_str.endswith("'"): b64_str = b64_str[1:-1]
+    if b64_str.startswith('"') and b64_str.endswith('"'): b64_str = b64_str[1:-1]
+
+    # 清理前缀
+    if 'base64,' in b64_str:
+        b64_str = b64_str.split('base64,')[-1]
+    
     try:
-        if not b64_str or pd.isna(b64_str): return None
-        b64_str = str(b64_str).strip()
-        # 容错处理：如果单个字符串里意外混入了引号
-        if b64_str.startswith("'") and b64_str.endswith("'"):
-            b64_str = b64_str[1:-1]
-        
         image_data = base64.b64decode(b64_str)
         return Image.open(io.BytesIO(image_data)).convert('RGB')
-    except Exception:
+    except:
         return None
 
 # -----------------------------
-# 3. 图像退化算法
+# 图像退化算法
 # -----------------------------
-def _motion_kernel(ksize, angle_deg):
-    ker = np.zeros((ksize, ksize), np.float32)
-    c = ksize // 2
-    ang = math.radians(angle_deg)
-    ca, sa = math.cos(ang), math.sin(ang)
-    for i in range(ksize):
-        t = i - c
-        x = c + int(round(t * ca))
-        y = c + int(round(t * sa))
-        if 0 <= x < ksize and 0 <= y < ksize:
-            ker[y, x] = 1.0
-    s = ker.sum()
-    ker /= (s if s > 0 else 1.0)
-    if s == 0: ker[c, c] = 1.0
-    return ker
-
-def add_motion_blur(img_u8, ksize):
-    if ksize <= 1: return img_u8.copy()
-    angle = random.uniform(0, 360)
-    kernel = _motion_kernel(int(ksize), angle)
-    return cv2.filter2D(img_u8, -1, kernel, borderType=cv2.BORDER_REFLECT101)
-
-def add_pepper_noise(img_u8, p):
-    h, w, _ = img_u8.shape
-    n = int(p * h * w)
-    if n <= 0: return img_u8.copy()
-    out = img_u8.copy()
-    ys = np.random.randint(0, h, size=n)
-    xs = np.random.randint(0, w, size=n)
-    out[ys, xs] = 0
-    return out
-
-def random_mask_blocks(img_u8, block_size=4, mask_ratio=0.1):
-    h, w, _ = img_u8.shape
-    out = img_u8.copy()
-    bh = (h + block_size - 1)//block_size
-    bw = (w + block_size - 1)//block_size
-    total = bh * bw
-    m = int(mask_ratio * total)
-    if m <= 0: return out
-    idxs = np.random.choice(total, size=m, replace=False)
-    for idx in idxs:
-        by, bx = divmod(idx, bw)
-        y0, x0 = by*block_size, bx*block_size
-        y1, x1 = min(y0+block_size, h), min(x0+block_size, w)
-        out[y0:y1, x0:x1] = 0
-    return out
-
-def add_darken(img_u8, factor):
-    f = float(factor)
-    out = np.clip((img_u8.astype(np.float32) / 255.0) * f, 0.0, 1.0)
-    return (out * 255.0 + 0.5).astype(np.uint8)
-
 def apply_random_degradation(pil_img, seed=None):
     if pil_img is None: return None
+    
+    import numpy as np
+    import cv2
+    import random
+    import math
+
+    CONFIG = {
+        "motion_blur": {"ksize": 15},                
+        "pepper":      0.15,                         
+        "mask":        {"block_size": 12, "mask_ratio": 0.30}, 
+        "darken":      0.30                          
+    }
+
+    def _motion_kernel(ksize, angle_deg):
+        ker = np.zeros((ksize, ksize), np.float32)
+        c = ksize // 2
+        ang = math.radians(angle_deg)
+        ca, sa = math.cos(ang), math.sin(ang)
+        for i in range(ksize):
+            t = i - c
+            x = c + int(round(t * ca))
+            y = c + int(round(t * sa))
+            if 0 <= x < ksize and 0 <= y < ksize:
+                ker[y, x] = 1.0
+        s = ker.sum()
+        ker /= (s if s > 0 else 1.0)
+        if s == 0: ker[c, c] = 1.0
+        return ker
+
     img_np = np.array(pil_img)
+    
     if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
+        safe_seed = seed % (2**32) 
+        random.seed(safe_seed)
+        np.random.seed(safe_seed)
+    
     options = ["motion_blur", "darken", "pepper", "mask"]
     choice = random.choice(options)
+    
     if choice == "motion_blur":
-        img_np = add_motion_blur(img_np, CONFIG["motion_blur"]["ksize"])
+        if CONFIG["motion_blur"]["ksize"] > 1:
+            angle = random.uniform(0, 360)
+            kernel = _motion_kernel(int(CONFIG["motion_blur"]["ksize"]), angle)
+            img_np = cv2.filter2D(img_np, -1, kernel, borderType=cv2.BORDER_REFLECT101)
+            
     elif choice == "darken":
-        img_np = add_darken(img_np, CONFIG["darken"])
+        f = float(CONFIG["darken"])
+        out = np.clip((img_np.astype(np.float32) / 255.0) * f, 0.0, 1.0)
+        img_np = (out * 255.0 + 0.5).astype(np.uint8)
+        
     elif choice == "pepper":
-        img_np = add_pepper_noise(img_np, CONFIG["pepper"])
+        h, w, _ = img_np.shape
+        n = int(CONFIG["pepper"] * h * w)
+        if n > 0:
+            ys = np.random.randint(0, h, size=n)
+            xs = np.random.randint(0, w, size=n)
+            img_np[ys, xs] = 0
+            
     elif choice == "mask":
-        img_np = random_mask_blocks(img_np, **CONFIG["mask"])
+        h, w, _ = img_np.shape
+        block_size = CONFIG["mask"]["block_size"]
+        mask_ratio = CONFIG["mask"]["mask_ratio"]
+        bh = (h + block_size - 1)//block_size
+        bw = (w + block_size - 1)//block_size
+        total = bh * bw
+        m = int(mask_ratio * total)
+        if m > 0:
+            idxs = np.random.choice(total, size=m, replace=False)
+            for idx in idxs:
+                by, bx = divmod(idx, bw)
+                y0, x0 = by*block_size, bx*block_size
+                y1, x1 = min(y0+block_size, h), min(x0+block_size, w)
+                img_np[y0:y1, x0:x1] = 0
+    
     return Image.fromarray(img_np)
 
 # -----------------------------
-# 4. 核心处理逻辑 (修正版：同步处理 image 和 image_path)
+# 核心处理逻辑
 # -----------------------------
-def process_row_images(index, raw_image_str, raw_path_str, seed_base):
-    """
-    同时处理 image (Base64) 和 image_path (文件名)
-    确保两者列表长度一致，并修改文件名以防止缓存命中。
-    """
-    # --- 1. 解析 image 字符串 ---
+def process_row_images(index, raw_image_str, seed_base):
+    import ast
+    import hashlib
+    import json # 仅用于读取时的兼容
+
     try:
-        img_list = ast.literal_eval(raw_image_str)
-        if not isinstance(img_list, list): img_list = [raw_image_str]
-    except:
-        img_list = [raw_image_str]
-
-    # --- 2. 解析 image_path 字符串 ---
-    try:
-        path_list = ast.literal_eval(raw_path_str)
-        if not isinstance(path_list, list): path_list = [raw_path_str]
-    except:
-        path_list = [raw_path_str]
-
-    # 安全性检查：如果 path 不够用，自动补全（防止 crash，虽然理论上数据应该对齐）
-    while len(path_list) < len(img_list):
-        path_list.append(f"unknown_{index}_{len(path_list)}.jpg")
-
-    new_img_list = []
-    new_path_list = []
-
-    # --- 3. 遍历处理 ---
-    for i, b64_str in enumerate(img_list):
-        # 3.1 处理文件名：必须改名！
-        original_fname = path_list[i]
-        fname_root, fname_ext = os.path.splitext(original_fname)
-        # 生成新文件名，加上 _LOW 标识
-        new_filename = f"{fname_root}_LOW{fname_ext}"
-        new_path_list.append(new_filename)
-
-        # 3.2 处理图片内容
+        # 1. 解析原始数据
+        # 优先使用 ast.literal_eval，因为原版数据格式是 Python List (单引号)
         try:
-            pil_img = b64_to_pil(b64_str)
-            if pil_img is None:
-                new_img_list.append(b64_str) # 解码失败保留原样
-                continue
-            
-            # 独立随机种子
-            item_seed = seed_base + int(index) + i if seed_base else None
-            processed_pil = apply_random_degradation(pil_img, seed=item_seed)
-            new_b64 = pil_to_b64(processed_pil, quality=95)
-            new_img_list.append(new_b64)
-            
-        except Exception:
-            # 任何处理异常，保留原数据，但必须使用新文件名（避免列表长度不一致）
-            new_img_list.append(b64_str)
+            img_list = ast.literal_eval(raw_image_str)
+            if not isinstance(img_list, list): img_list = [raw_image_str]
+        except:
+            # 兼容 JSON 格式（如果之前跑过别的脚本）
+            try:
+                img_list = json.loads(raw_image_str)
+                if not isinstance(img_list, list): img_list = [raw_image_str]
+            except:
+                # 纯字符串
+                img_list = [raw_image_str]
 
-    # --- 4. 重新打包成字符串列表 ---
-    return index, str(new_img_list), str(new_path_list)
+        new_img_list = []
+
+        for i, b64_str in enumerate(img_list):
+            try:
+                pil_img = b64_to_pil(b64_str)
+                
+                if pil_img is not None:
+                    # 生成随机种子
+                    idx_str = str(index)
+                    hash_val = int(hashlib.sha256(idx_str.encode('utf-8')).hexdigest(), 16)
+                    item_seed = seed_base + hash_val + i 
+                    
+                    # 退化处理
+                    processed_pil = apply_random_degradation(pil_img, seed=item_seed)
+                    
+                    # 编码回 Base64 (quality=75)
+                    processed_b64 = pil_to_b64(processed_pil, quality=95)
+                    new_img_list.append(processed_b64)
+                else:
+                    new_img_list.append(b64_str)
+            except:
+                new_img_list.append(b64_str)
+
+        # ------------------------------------------------------------
+        # 关键修改：使用 str() 而不是 json.dumps()
+        # ------------------------------------------------------------
+        # 原版 BLINK 是: "['/9j/...', '/9j/...']" (单引号)
+        # str([]) 在 Python 中会生成: "['item1', 'item2']" (单引号)
+        # 这与原版格式完全一致。Base64 字符集不含单引号，因此这样做是安全的。
+        final_str = str(new_img_list)
+        
+        return index, final_str
+    
+    except Exception as e:
+        print(f"\n[CRITICAL] Row {index} failed: {e}")
+        return index, raw_image_str
 
 # -----------------------------
-# 5. 主程序
+# 主程序
 # -----------------------------
 def process_tsv(tsv_path, seed):
     filename = os.path.basename(tsv_path)
     print(f"Processing: {filename} (Seed: {seed})")
     
-    # 使用 dtype=object 防止 pandas 自动推断类型导致精度丢失或格式错误
     try:
-        df = pd.read_csv(tsv_path, sep='\t', encoding='utf-8')
+        df = pd.read_csv(tsv_path, sep='\t', encoding='utf-8', dtype={'index': str})
     except Exception as e:
         print(f"  [Error] Cannot read {filename}: {e}")
         return
 
-    # 检查必要列
     if 'image' not in df.columns:
         print(f"  [Skip] No 'image' column in {filename}")
         return
     
-    # 兼容性处理：如果没有 image_path 列，先创建一个基于 index 的伪列
-    # 这主要是为了兼容 MME 等单图数据集，虽然 MME 不强制依赖 image_path，但有了它逻辑更统一
-    if 'image_path' not in df.columns:
-        print("  [Info] 'image_path' column missing. Generating default paths based on index...")
-        df['image_path'] = df['index'].apply(lambda x: f"{x}.jpg")
-
-    results_img = {}
-    results_path = {}
-    
+    df = df.dropna(subset=['image'])
     print(f"  Start processing {len(df)} rows...")
+    
+    start_time = time.time()
     
     with ProcessPoolExecutor() as executor:
         futures = {
-            executor.submit(process_row_images, row['index'], row['image'], row['image_path'], seed): row['index']
+            executor.submit(process_row_images, row['index'], row['image'], seed): row['index']
             for _, row in df.iterrows()
         }
         
+        results_img = {}
+        
         for future in tqdm(as_completed(futures), total=len(futures), desc="  Degrading"):
-            idx, new_imgs, new_paths = future.result()
-            results_img[idx] = new_imgs
-            results_path[idx] = new_paths
+            idx, result_str = future.result()
+            results_img[idx] = result_str
+
+    elapsed = time.time() - start_time
+    print(f"  Processing finished in {elapsed:.2f}s")
 
     # 更新 DataFrame
     new_image_col = []
-    new_path_col = []
     
     for _, row in df.iterrows():
         idx = row['index']
         new_image_col.append(results_img.get(idx, row['image']))
-        new_path_col.append(results_path.get(idx, row['image_path']))
 
     df['image'] = new_image_col
-    df['image_path'] = new_path_col
 
-    # 生成新文件名
     name_no_ext = os.path.splitext(tsv_path)[0]
     if "LOW_LEVEL" in name_no_ext:
-        new_path = tsv_path # 如果已经是低质文件，覆盖
+        new_path = tsv_path
     else:
         new_path = f"{name_no_ext}_LOW_LEVEL.tsv"
     
-    # QUOTE_ALL 至关重要，防止 list 字符串里的逗号破坏 tsv 结构
+    # 使用 csv.QUOTE_ALL 确保整个列表字符串被双引号包围
+    # TSV 文件中的样子: "['/9j/...', '/9j/...']"
     df.to_csv(new_path, sep='\t', index=False, quoting=csv.QUOTE_ALL)
     print(f"  [Success] Saved to: {new_path}")
-    print(f"  [Note] Ensure you clear VLMEvalKit cache or expect new images at {os.path.basename(new_path)}")
+    print("  Note: Format matches original (Python List string with single quotes). Quality=75.")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_file", type=str, default="/root/CLEAR/LMUData/MMMU_DEV_VAL.tsv", help="Path to input .tsv file")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--input_file", type=str, default="/root/CLEAR/LMUData/BLINK.tsv", help="Path to input .tsv file")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
     if not os.path.exists(args.input_file):
