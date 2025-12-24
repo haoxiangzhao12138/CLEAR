@@ -254,7 +254,7 @@ def process_tsv(tsv_path, seed):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_file", type=str, default="/root/CLEAR/LMUData/BLINK.tsv", help="Path to input .tsv file")
+    parser.add_argument("--input_file", type=str, default="/root/CLEAR/LMUData/MMMU_DEV_VAL.tsv", help="Path to input .tsv file")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
 
