@@ -10,9 +10,17 @@
         }
     },
     "data": {
-        "MME_LOW_LEVEL": {
-            "class": "ImageYORNDataset",
-            "dataset": "MME_LOW_LEVEL"
+        "MMVP_LOW_LEVEL": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_LOW_LEVEL"
+        },
+        "BLINK_LOW_LEVEL": {
+            "class": "ImageMCQDataset",
+            "dataset": "BLINK_LOW_LEVEL"
+        },
+        "CV-Bench-2D_LOW_LEVEL": {
+            "class": "CVBench",
+            "dataset": "CV-Bench-2D_LOW_LEVEL"
         }
     }
 }

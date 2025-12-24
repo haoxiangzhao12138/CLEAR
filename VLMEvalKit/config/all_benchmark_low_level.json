@@ -5,7 +5,7 @@
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "../models/BAGEL-7B-MoT",
             "reasoning_mode": "text",
-            "is_thinking": false,
+            "is_thinking": true,
             "is_ema": true
         }
     },
@@ -30,9 +30,9 @@
             "class": "MathVista",
             "dataset": "MathVista_MINI_LOW_LEVEL"
         },
-        "MMVP_LOW_LEVEL_LOW_LEVEL": {
+        "MMVP_LOW_LEVEL": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_LOW_LEVEL"
+            "dataset": "MMVP_LOW_LEVEL"
         },
         "BLINK_LOW_LEVEL": {
             "class": "ImageMCQDataset",
