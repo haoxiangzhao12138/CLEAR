@@ -153,6 +153,19 @@ class FSDPCheckpoint:
                     )
                 del ema_state_dict
                 torch.cuda.empty_cache()
+        
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+        ):
+            model_state_dict = _to_bf16(model.state_dict())
+            if dist.get_rank() == 0:
+                save_file(
+                    model_state_dict, os.path.join(save_path, "model.safetensors")
+                )
+            del model_state_dict
+            torch.cuda.empty_cache()
 
         # with FSDP.state_dict_type(
         #     model,

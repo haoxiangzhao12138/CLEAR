@@ -274,7 +274,7 @@ class TrainingArguments:
 
     # --- optimization & scheduler ---
     warmup_steps: int = field(
-        default=500,
+        default=200,
         metadata={"help": "Linear warm-up steps before applying the main LR schedule."},
     )
     lr_scheduler: str = field(

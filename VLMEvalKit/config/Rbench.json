@@ -1,0 +1,18 @@
+{
+    "model": {
+        "BAGEL": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": true,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "R-Bench-Dis": {
+            "class": "ImageMCQDataset",
+            "dataset": "R-Bench-Dis"
+        }
+    }
+}

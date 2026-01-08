@@ -1,0 +1,54 @@
+{
+    "model": {
+        "BAGEL": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": true,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "MME_LOW_LEVEL_MIXED": {
+            "class": "ImageYORNDataset",
+            "dataset": "MME_LOW_LEVEL_MIXED"
+        },
+        "MMBench_DEV_EN_V11_LOW_LEVEL_MIXED": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_MIXED"
+        },
+        "MMMU_DEV_VAL_LOW_LEVEL_MIXED": {
+            "class": "MMMUDataset",
+            "dataset": "MMMU_DEV_VAL_LOW_LEVEL_MIXED"
+        },
+        "MMVet_LOW_LEVEL_MIXED": {
+            "class": "MMVet",
+            "dataset": "MMVet_LOW_LEVEL_MIXED"
+        },
+        "MathVista_MINI_LOW_LEVEL": {
+            "class": "MathVista",
+            "dataset": "MathVista_MINI_LOW_LEVEL_MIXED"
+        },
+        "MMVP_LOW_LEVEL_MIXED": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_LOW_LEVEL_MIXED"
+        },
+        "BLINK_LOW_LEVEL_MIXED": {
+            "class": "ImageMCQDataset",
+            "dataset": "BLINK_LOW_LEVEL_MIXED"
+        },
+        "CV-Bench-2D_LOW_LEVEL_MIXED": {
+            "class": "CVBench",
+            "dataset": "CV-Bench-2D_LOW_LEVEL_MIXED"
+        },
+        "MMStar_LOW_LEVEL_MIXED": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMStar_LOW_LEVEL_MIXED"
+        },
+        "RealWorldQA_LOW_LEVEL_MIXED": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_LOW_LEVEL_MIXED"
+        }
+    }
+}
