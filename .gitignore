@@ -1,6 +1,7 @@
 models/*
 datasets/*
 results/
+wandb/*
 **/__pycache__/
 **/outputs/*
 VLMEvalKit/outputs/*

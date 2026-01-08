@@ -41,6 +41,14 @@
         "CV-Bench-2D": {
             "class": "CVBench",
             "dataset": "CV-Bench-2D"
+        },
+        "MMStar": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMStar"
+        },
+        "RealWorldQA": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA"
         }
 
     }

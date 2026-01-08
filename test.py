@@ -4,7 +4,7 @@ import time
 
 start_time = time.time()
 
-os.environ["OPENAI_API_KEY"] = "sk-zSaDTLLv9cSEwRRt9oLhmMMNpFidKy4cGEtogaICub4mFw67"
+os.environ["OPENAI_API_KEY"] = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
 os.environ["OPENAI_API_BASE"] = "http://yy.dbh.baidu-int.com/v1"
 
 def call_model_openai(messages, modelname):

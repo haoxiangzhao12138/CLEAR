@@ -111,12 +111,17 @@ class PackedDataset(torch.utils.data.IterableDataset):
             assert "dataset_names" in dataset_args.keys()
             dataset_names = dataset_args.pop("dataset_names")
             dataset_args["data_dir_list"] = []
+
+            # 初始化自定义路径变量，防止后续追加时报错
+            dataset_args["clean_image_dir"] = None
+            dataset_args["corrupted_image_dir"] = None
+
+
             for item in dataset_names:
                 if self.local_rank == 0:
                     print(f"Preparing Dataset {grouped_dataset_name}/{item}")
                 meta_info = DATASET_INFO[grouped_dataset_name][item]
-                dataset_args["data_dir_list"].append(meta_info["data_dir"])
-
+                dataset_args["data_dir_list"].append(meta_info.get("data_dir"))
                 if "parquet_info_path" in meta_info.keys():
                     if "parquet_info" not in dataset_args.keys():
                         dataset_args["parquet_info"] = {}
@@ -137,6 +142,11 @@ class PackedDataset(torch.utils.data.IterableDataset):
                         dataset_args["jsonl_path_list"] = [meta_info["jsonl_path"]]
                     else:
                         dataset_args["jsonl_path_list"].append(meta_info["jsonl_path"])
+                
+                if "clean_image_dir" in meta_info:
+                    dataset_args["clean_image_dir"] = meta_info["clean_image_dir"]
+                if "corrupted_image_dir" in meta_info:
+                    dataset_args["corrupted_image_dir"] = meta_info["corrupted_image_dir"]
 
             resume_data_status = dataset_args.pop("resume_data_status", True)
             if (

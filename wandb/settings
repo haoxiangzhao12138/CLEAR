@@ -1,0 +1,5 @@
+[default]
+entity = haoxiangzhao
+project = clear
+base_url = https://api.wandb.ai
+

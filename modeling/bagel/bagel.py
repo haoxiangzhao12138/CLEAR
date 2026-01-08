@@ -138,37 +138,24 @@ class Bagel(PreTrainedModel):
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
     ) -> torch.Tensor:
-        """
-        Args:
-            sequence_length: length of sequence.
-            packed_text_ids: 1-D int tensor, packed text token ids.
-            packed_text_indexes: 1-D int tensor, packed text token indexes in sequence.
-            sample_lens: A list of N ints, length of each sample in packed_sequence.
-            nested_attention_masks: A list of N 2-D float tensor,  where 0.0 means attention and
-                -inf means ignore.
-            packed_position_ids: packed 1-D positions, an image has only one global position shared
-                by all latent tokens.
+        
+        device = packed_text_ids.device
+        dtype = self.language_model.dtype
+        
+        # -------------------------------------------------------------
+        # [Step 0] 预先构建 Dummy Loss 组件
+        # 确保每个可训练的子模块都在计算图中被“触碰”一次
+        # -------------------------------------------------------------
+        dummy_loss = torch.tensor(0.0, device=device, dtype=dtype)
 
-            packed_vit_tokens: packed patchified image tokens for vit model.
-            packed_vit_position_ids: 1-D int tensor, the position of each token for vit model.
-            packed_vit_token_indexes: 1-D int tensor, packed vit token indexes in sequence.
-            vit_token_seqlens: 1-D int tensor, the length of each image tokens for vit model.
-            packed_label_ids: 1-D int tensor, packed label token ids.
-            ce_loss_indexes: 1-D bool tensor, where to compute ce loss.
-
-            padded_latent: padded latent from VAE encoder.
-            patchified_vae_latent_shapes: A list of (h, w) tuples, patchfied latent shapes of each image.
-            packed_latent_position_ids: 1-D int tensor, the position of each token for latent.
-            packed_vae_token_indexes: 1-D int tensor, padded image token indexes in sequence.
-            packed_timesteps: 1-D float tensor, flow timesteps. 0 indicates use clean image.
-            mse_loss_indexes: 1-D bool tensor, where to compute mse loss.
-        """
+        # 1. 文本 Embedding
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros(
             size=(sequence_length, self.hidden_size)
         )
         packed_sequence[packed_text_indexes] = packed_text_embedding
 
+        # 2. Attention Mask
         if nested_attention_masks is None:
             sparse_mask = create_sparse_mask(
                 sample_lens, split_lens, attn_modes, packed_text_embedding.device
@@ -188,55 +175,95 @@ class Bagel(PreTrainedModel):
         else:
             attention_mask = nested_attention_masks
 
+        # 3. Visual Understanding Branch
         if self.config.visual_und:
-            cu_seqlens = torch.nn.functional.pad(
-                torch.cumsum(vit_token_seqlens, dim=0), (1, 0)
-            )
-            cu_seqlens = cu_seqlens.to(torch.int32)
-            max_seqlen = torch.max(vit_token_seqlens).item()
-            packed_vit_token_embed = self.vit_model(
-                packed_pixel_values=packed_vit_tokens,
-                packed_flattened_position_ids=packed_vit_position_ids,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=max_seqlen,
-            )
-            packed_vit_token_embed = self.connector(packed_vit_token_embed)
-            vit_token_pos_emb = self.vit_pos_embed(packed_vit_position_ids)
-            packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb
-            packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
+            if packed_vit_tokens is not None:
+                # [Real Pass]
+                cu_seqlens = torch.nn.functional.pad(
+                    torch.cumsum(vit_token_seqlens, dim=0), (1, 0)
+                )
+                cu_seqlens = cu_seqlens.to(torch.int32)
+                max_seqlen = torch.max(vit_token_seqlens).item()
+                
+                packed_vit_token_embed = self.vit_model(
+                    packed_pixel_values=packed_vit_tokens,
+                    packed_flattened_position_ids=packed_vit_position_ids,
+                    cu_seqlens=cu_seqlens,
+                    max_seqlen=max_seqlen,
+                )
+                packed_vit_token_embed = self.connector(packed_vit_token_embed)
+                vit_token_pos_emb = self.vit_pos_embed(packed_vit_position_ids)
+                packed_vit_token_embed = packed_vit_token_embed + vit_token_pos_emb
+                
+                packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
+            else:
+                # [Dummy Pass]
+                # 构造极小输入，避免显存占用，但必须产生计算图
+                # 使用 packed_text_embedding[0:1] 作为输入源，确保连通性
+                dummy_in = packed_text_embedding[0:1].detach().new_zeros((1, self.vit_hidden_size))
+                # 必须 enable_grad 确保中间变量追踪
+                dummy_in.requires_grad_(True) 
+                
+                # Connector & PosEmbed
+                d_conn = self.connector(dummy_in)
+                d_pos = self.vit_pos_embed(torch.zeros((1,), device=device, dtype=torch.long))
+                
+                # 累加到 dummy_loss，乘0消除数值影响，但保留梯度链
+                dummy_loss = dummy_loss + (d_conn.sum() + d_pos.sum()) * 0.0
 
+        # 4. Visual Generation Branch (Input Side)
+        packed_latent_clean = None
+        noise = None
+        
         if self.config.visual_gen:
-            p = self.latent_patch_size
-            packed_latent = []
-            for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
-                latent = latent[:, : h * p, : w * p].reshape(
-                    self.latent_channel, h, p, w, p
-                )
-                latent = torch.einsum("chpwq->hwpqc", latent).reshape(
-                    -1, p * p * self.latent_channel
-                )
-                packed_latent.append(latent)
-            packed_latent_clean = torch.cat(packed_latent, dim=0)
+            if padded_latent is not None:
+                # [Real Pass]
+                p = self.latent_patch_size
+                packed_latent = []
+                for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
+                    latent = latent[:, : h * p, : w * p].reshape(
+                        self.latent_channel, h, p, w, p
+                    )
+                    latent = torch.einsum("chpwq->hwpqc", latent).reshape(
+                        -1, p * p * self.latent_channel
+                    )
+                    packed_latent.append(latent)
+                packed_latent_clean = torch.cat(packed_latent, dim=0)
 
-            noise = torch.randn_like(packed_latent_clean)
-            packed_timesteps = torch.sigmoid(packed_timesteps)
-            packed_timesteps = (
-                self.timestep_shift
-                * packed_timesteps
-                / (1 + (self.timestep_shift - 1) * packed_timesteps)
-            )
-            packed_latent = (
-                1 - packed_timesteps[:, None]
-            ) * packed_latent_clean + packed_timesteps[:, None] * noise
-            packed_timestep_embeds = self.time_embedder(packed_timesteps)
-            latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
-            packed_latent = (
-                self.vae2llm(packed_latent)
-                + packed_timestep_embeds
-                + latent_token_pos_emb
-            )
-            packed_sequence[packed_vae_token_indexes] = packed_latent
+                noise = torch.randn_like(packed_latent_clean)
+                packed_timesteps = torch.sigmoid(packed_timesteps)
+                packed_timesteps = (
+                    self.timestep_shift
+                    * packed_timesteps
+                    / (1 + (self.timestep_shift - 1) * packed_timesteps)
+                )
+                packed_latent = (
+                    1 - packed_timesteps[:, None]
+                ) * packed_latent_clean + packed_timesteps[:, None] * noise
+                
+                packed_timestep_embeds = self.time_embedder(packed_timesteps)
+                latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
+                packed_latent = (
+                    self.vae2llm(packed_latent)
+                    + packed_timestep_embeds
+                    + latent_token_pos_emb
+                )
+                packed_sequence[packed_vae_token_indexes] = packed_latent
+            else:
+                # [Dummy Pass]
+                # 构造输入
+                d_lat = torch.zeros((1, self.patch_latent_dim), device=device, dtype=dtype)
+                d_time = torch.zeros((1,), device=device, dtype=dtype)
+                d_idx = torch.zeros((1,), device=device, dtype=torch.long)
+                
+                # Forward
+                d_v2l = self.vae2llm(d_lat)
+                d_temb = self.time_embedder(d_time)
+                d_pos = self.latent_pos_embed(d_idx)
+                
+                dummy_loss = dummy_loss + (d_v2l.sum() + d_temb.sum() + d_pos.sum()) * 0.0
 
+        # 5. MoE Logic
         extra_inputs = {}
         if self.use_moe:
             packed_und_token_indexes = packed_text_indexes
@@ -249,6 +276,7 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
             )
 
+        # 6. LLM Forward
         last_hidden_state = self.language_model(
             packed_sequence=packed_sequence,
             sample_lens=sample_lens,
@@ -257,29 +285,39 @@ class Bagel(PreTrainedModel):
             **extra_inputs,
         )
 
+        # 7. MSE Loss Calculation (Output Side)
         mse = None
         if self.config.visual_gen:
-            if len(mse_loss_indexes) == 0:
-                # 构造一个 shape=(1, hidden) 的全 0 向量
-                dummy_input = last_hidden_state.new_zeros((1, self.hidden_size))
-                dummy_pred = self.llm2vae(dummy_input)  # 一定会用到 llm2vae 的参数
-                mse = dummy_pred.sum() * 0.0  # 标量 0，梯度也全 0
-            else:
-                packed_mse_preds = self.llm2vae(
-                    last_hidden_state[mse_loss_indexes]
-                )  # last_hidden_state (seqlen, hidden_size)
-                target = (
-                    noise - packed_latent_clean
-                )  # NOTE: v_t=dx_t/dt=x_1-x_0, pointing from data to noise
+            if mse_loss_indexes is not None and len(mse_loss_indexes) > 0 and padded_latent is not None:
+                # [Real Pass]
+                packed_mse_preds = self.llm2vae(last_hidden_state[mse_loss_indexes])
+                target = noise - packed_latent_clean
                 has_mse = packed_timesteps > 0
-                mse = (packed_mse_preds - target[has_mse]) ** 2
+                mse_val = (packed_mse_preds - target[has_mse]) ** 2
+                
+                # 将 dummy_loss 挂载到真实的 mse 上，确保所有 dummy 梯度都能回传
+                mse = mse_val + dummy_loss 
+            else:
+                # [Dummy Pass]
+                # 必须让 LLM2VAE 参与计算
+                # 使用 last_hidden_state 的一部分作为输入，确保连通性
+                d_out = self.llm2vae(last_hidden_state[0:1]) 
+                
+                # 这里的 mse 包含：llm2vae 的 dummy 梯度 + 前面所有 dummy 的梯度
+                mse = d_out.sum() * 0.0 + dummy_loss
 
+        # 8. CE Loss Calculation
         ce = None
         if ce_loss_indexes is not None:
-            packed_ce_preds = self.language_model.lm_head(
-                last_hidden_state[ce_loss_indexes]
-            )
-            ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
+            if ce_loss_indexes.sum() > 0:
+                packed_ce_preds = self.language_model.lm_head(
+                    last_hidden_state[ce_loss_indexes]
+                )
+                ce = F.cross_entropy(packed_ce_preds, packed_label_ids, reduction="none")
+            else:
+                # Dummy CE
+                d_ce = self.language_model.lm_head(last_hidden_state[0:1])
+                ce = d_ce.sum() * 0.0
 
         return dict(mse=mse, ce=ce)
 

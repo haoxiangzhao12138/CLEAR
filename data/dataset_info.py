@@ -1,45 +1,39 @@
 # Copyright 2025 Bytedance Ltd. and/or its affiliates.
 # SPDX-License-Identifier: Apache-2.0
 
-from .interleave_datasets import InterleaveReasonIterableDataset
-from .depth_datasets import InterleaveDepthIterableDataset
+from .interleave_datasets import InterleaveReasonIterableDataset, TextReasonIterableDataset
 
 
 DATASET_REGISTRY = {
     "reason_interleave_dataset": InterleaveReasonIterableDataset,
-    "vkitti": InterleaveDepthIterableDataset,
-    "hypersim": InterleaveDepthIterableDataset,
-    "ade20k": InterleaveDepthIterableDataset,
+    "reason_text_dataset": InterleaveReasonIterableDataset,
+    "pure_text_dataset": TextReasonIterableDataset,
 }
 
 
 DATASET_INFO = {
     "reason_interleave_dataset": {
         "reason_interleave_dataset": {
-            "data_dir": "-",
-            "jsonl_path": "./datasets/COOPER_reasoning_train_set/Interleaved_SFT.jsonl",
-            "num_total_samples": 6901,
+            "clean_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/images",
+            "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/degrade_images",
+            "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/agent_react_data_TOOL.jsonl",
+            "num_total_samples": 3628,
         }
     },
-    "vkitti": {
-        "vkitti": {
-            "data_dir": "./datasets/vkitti/",
-            "jsonl_path": "./datasets/vkitti/train.jsonl",
-            "num_total_samples": 20148,
+    "reason_text_dataset":{
+        "reason_text_dataset": {
+            "clean_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/images",
+            "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/degrade_images",
+            "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/agent_react_data_DIRECT.jsonl",
+            "num_total_samples": 23075,
         }
     },
-    "hypersim": {
-        "hypersim": {
-            "data_dir": "./datasets/Hypersim/",
-            "jsonl_path": "./datasets/Hypersim/filename_list_train_filtered.jsonl",
-            "num_total_samples": 53885,
+    "pure_text_dataset": {
+        "pure_text_dataset": {
+            "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/degrade_images",
+            "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/pure_text_data.jsonl",
+            "num_total_samples": 9746,
         }
     },
-    "ade20k": {
-        "ade20k": {
-            "data_dir": "./datasets/ADE20K_SEG",
-            "jsonl_path": "./datasets/ADE20K_SEG/ade20k_train_identify.jsonl",
-            "num_total_samples": 25574,
-        }
-    },
+
 }

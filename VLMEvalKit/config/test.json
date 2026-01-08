@@ -10,13 +10,9 @@
         }
     },
     "data": {
-        "MMMU_DEV_VAL_LOW_LEVEL": {
-            "class": "MMMUDataset",
-            "dataset": "MMMU_DEV_VAL_LOW_LEVEL"
-        },
-        "BLINK_LOW_LEVEL": {
+        "RealWorldQA": {
             "class": "ImageMCQDataset",
-            "dataset": "BLINK_LOW_LEVEL"
-        }        
+            "dataset": "RealWorldQA"
+        }
     }
 }
