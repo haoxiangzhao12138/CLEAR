@@ -2,7 +2,7 @@ export NCCL_DEBUG=INFO  # 开启PyTorch分布式调试日志
 export NCCL_TIMEOUT=3600000  # 超时时间设为30分钟（根据需要调整）
 
 # 取当前日期＋小时，例如 20250613_14
-experiment="mix_base"
+experiment="mix"
 ts=$(date +"%Y%m%d_%H%M%S")
 run_id="${ts}_${experiment}"
 
@@ -41,7 +41,7 @@ torchrun \
   --total_steps 3000 \
   --save_every 1000 \
   --expected_num_tokens 32768 \
-  --max_num_tokens 32768 \
+  --max_num_tokens 36864 \
   --max_num_tokens_per_sample 16384 \
   --wandb_project clear \
   --wandb_offline True \

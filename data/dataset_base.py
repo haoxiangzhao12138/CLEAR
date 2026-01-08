@@ -321,9 +321,9 @@ class PackedDataset(torch.utils.data.IterableDataset):
                 if len(buffer) < self.max_buffer_size and not sample_from_buffer:
                     buffer.append(sample)
                 else:
-                    print(
-                        f"Yielding data with length {sum(sequence_status['sample_lens'])}"
-                    )
+                    # print(
+                    #     f"Yielding data with length {sum(sequence_status['sample_lens'])}"
+                    # )
                     data = self.to_tensor(sequence_status)
                     data["batch_data_indexes"] = batch_data_indexes
                     yield data
