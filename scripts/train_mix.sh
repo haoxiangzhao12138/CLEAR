@@ -41,7 +41,7 @@ torchrun \
   --total_steps 3000 \
   --warmup_steps 200 \
   --save_every 1000 \
-  --expected_num_tokens 32768 \
+  --expected_num_tokens 30000 \
   --max_num_tokens 32768 \
   --max_num_tokens_per_sample 16384 \
   --wandb_project clear \
