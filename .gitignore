@@ -6,4 +6,5 @@ wandb/*
 **/outputs/*
 VLMEvalKit/outputs/*
 **/test.*
+VLMEvalKit/config/test.json
 LMUData
