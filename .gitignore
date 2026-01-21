@@ -6,4 +6,4 @@ wandb/*
 **/outputs/*
 VLMEvalKit/outputs/*
 **/test.*
-VLMEvalKit/config/*
+LMUData

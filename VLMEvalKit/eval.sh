@@ -10,7 +10,7 @@ torchrun \
     --nproc-per-node=8 \
     --master_port=29503 \
     run.py \
-    --config ./config/test.json \
+    --config ./config/high_corruption.json \
     --judge gpt-4-0125 \
     --verbose
 

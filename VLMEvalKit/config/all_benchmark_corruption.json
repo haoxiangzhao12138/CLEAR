@@ -10,45 +10,37 @@
         }
     },
     "data": {
-        "MME_LOW_LEVEL_MIXED": {
+        "MME_LOW_LEVEL_HIGH": {
             "class": "ImageYORNDataset",
-            "dataset": "MME_LOW_LEVEL_MIXED"
+            "dataset": "MME_LOW_LEVEL_HIGH"
         },
-        "MMBench_DEV_EN_V11_LOW_LEVEL_MIXED": {
+        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_MIXED"
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
         },
-        "MMMU_DEV_VAL_LOW_LEVEL_MIXED": {
-            "class": "MMMUDataset",
-            "dataset": "MMMU_DEV_VAL_LOW_LEVEL_MIXED"
-        },
-        "MMVet_LOW_LEVEL_MIXED": {
+        "MMVet_LOW_LEVEL_HIGH": {
             "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_MIXED"
+            "dataset": "MMVet_LOW_LEVEL_HIGH"
         },
         "MathVista_MINI_LOW_LEVEL": {
             "class": "MathVista",
-            "dataset": "MathVista_MINI_LOW_LEVEL_MIXED"
+            "dataset": "MathVista_MINI_LOW_LEVEL_HIGH"
         },
-        "MMVP_LOW_LEVEL_MIXED": {
+        "MMVP_LOW_LEVEL_HIGH": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_MIXED"
+            "dataset": "MMVP_LOW_LEVEL_HIGH"
         },
-        "BLINK_LOW_LEVEL_MIXED": {
-            "class": "ImageMCQDataset",
-            "dataset": "BLINK_LOW_LEVEL_MIXED"
-        },
-        "CV-Bench-2D_LOW_LEVEL_MIXED": {
+        "CV-Bench-2D_LOW_LEVEL_HIGH": {
             "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_MIXED"
+            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
         },
-        "MMStar_LOW_LEVEL_MIXED": {
+        "MMStar_LOW_LEVEL_HIGH": {
             "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_MIXED"
+            "dataset": "MMStar_LOW_LEVEL_HIGH"
         },
-        "RealWorldQA_LOW_LEVEL_MIXED": {
+        "RealWorldQA_LOW_LEVEL_HIGH": {
             "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_MIXED"
+            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
         }
     }
 }

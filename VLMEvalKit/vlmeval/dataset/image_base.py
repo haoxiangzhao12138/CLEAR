@@ -13,8 +13,8 @@ def img_root_map(dataset):
     if 'COCO_VAL' == dataset:
         return 'COCO'
     if 'MMMU' in dataset:
-        if 'LOW_LEVEL_MIXED' in dataset:
-            return 'MMMU_LOW_LEVEL_MIXED'
+        if 'LOW_LEVEL_HIGH' in dataset:
+            return 'MMMU_LOW_LEVEL_HIGH'
         return 'MMMU'
     if "QSpatial" in dataset:
         return "QSpatial"
@@ -26,7 +26,11 @@ def img_root_map(dataset):
         'MMBench_DEV_EN_V11': 'MMBench_V11', 'MMBench_TEST_EN_V11': 'MMBench_V11',
         'MMBench_DEV_CN_V11': 'MMBench_V11', 'MMBench_TEST_CN_V11': 'MMBench_V11',
         'MMBench_V11': 'MMBench', 'MMBench_CN_V11': 'MMBench',
-        'MMBench_DEV_EN_V11_LOW_LEVEL_MIXED': 'MMBench_DEV_EN_V11_LOW_LEVEL_MIXED',
+        'MMBench_DEV_EN_V11_LOW_LEVEL_HIGH': 'MMBench_DEV_EN_V11_LOW_LEVEL_HIGH',
+        'MMBench_DEV_EN_V11_LOW_LEVEL_MID': 'MMBench_DEV_EN_V11_LOW_LEVEL_MID',
+        'MMBench_DEV_EN_V11_LOW_LEVEL_LOW': 'MMBench_DEV_EN_V11_LOW_LEVEL_LOW',
+
+
     }
     if dataset in mmbench_root_map:
         return mmbench_root_map[dataset]
