@@ -488,7 +488,7 @@ def main():
     llm_config.layer_module = model_args.layer_module
     llm_config.qk_norm = model_args.llm_qk_norm
     llm_config.tie_word_embeddings = model_args.tie_word_embeddings
-    llm_config.gradient_checkpointing = True
+    # llm_config.gradient_checkpointing = True
     end_time = time.time()
     if dist.get_rank() == 0:
         print(f"[计时] 加载和初始化语言模型config: {end_time - start_time:.4f}秒")

@@ -45,7 +45,7 @@ torchrun \
   --max_num_tokens 32768 \
   --max_num_tokens_per_sample 16384 \
   --wandb_project clear \
-  --wandb_offline False \
+  --wandb_offline True \
   --wandb_name "${run_id}" \
   --wandb_runid "${run_id}" \
 

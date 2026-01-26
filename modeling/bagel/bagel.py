@@ -700,7 +700,7 @@ class Bagel(PreTrainedModel):
             curr += 1
             _curr += 1
 
-            image_tensor = transforms(image, is_rgb=True)
+            image_tensor = transforms(image)
             vae_image_tensors.append(image_tensor)
             vae_posiiton_ids = self.get_flattened_position_ids(
                 image_tensor.size(1),

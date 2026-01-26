@@ -13,11 +13,11 @@ from PIL import Image
 # ================= 配置区域 =================
 
 LOCAL_DATASET_PATH = "/root/CLEAR/datasets/LLaVA-OneVision-Data"
-OUTPUT_ROOT = "./processed_dataset"
+OUTPUT_ROOT = "/root/CLEAR/datasets/processed_dataset"
 TEMP_DIR = os.path.join(OUTPUT_ROOT, "temp_jsonl")  # 临时文件夹
 
 # 采样比例
-SFT_RATIO = 0.01 
+SFT_RATIO = 0.05
 RL_RATIO  = 0.01
 
 # 图片过滤阈值

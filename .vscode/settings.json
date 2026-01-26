@@ -5,12 +5,14 @@
         "**/bagel_example/**",  // 替换为你的数据集文件夹名
         "**/results/**",
         "**/datasets/**",
-        "**/wandb/**"
+        "**/wandb/**",
+        "**/transformers-4.54.0/**"
     ],
     "files.watcherExclude": {
         "**/bagel_example/**": true,  // 排除文件监视
         "**/results/**": true,
         "**/datasets/**": true,
-        "**/wandb/**": true
+        "**/wandb/**": true,
+        "**/transformers-4.54.0/**": true
     }
 }

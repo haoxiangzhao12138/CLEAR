@@ -22,10 +22,6 @@
             "class": "MMVet",
             "dataset": "MMVet"
         },
-        "MathVista_MINI": {
-            "class": "MathVista",
-            "dataset": "MathVista_MINI"
-        },
         "MMVP": {
             "class": "ImageMCQDataset",
             "dataset": "MMVP"
