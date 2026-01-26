@@ -52,22 +52,6 @@ The structure of your response should follow these patterns:
 <think>Although there is some noise, the red car is clearly visible in the foreground.</think><answer>The car is red.</answer>
 """
 
-IMAGE_REASON_SYSTEM_PROMPT = """You are a specialized multimodal assistant. Your aim is to answer the questions given by users based on the depth estimation and semantic segmentation you have generated.
-
-# Instruction
-Please don't thinking and just give the final answer directly in <answer> tag. Besides, you also need to put a simple and direct answer in \\boxed{{}} for verification.
-
-The structure of your response should be like this:
-<answer> ... </answer>
-"""
-
-DEPTH_PROMPT = "<depth-estimation>Estimate the depth of the image and generate the depth map.</depth-estimation>"
-
-SEGMENTATION_PROMPT = "<segmentation>Segment the objects in the image with different colors.</segmentation>"
-
-REFLECTION_PROMPT = "\nHere is the result of the depth-estimation/segmentation. Please note that the result of the depth-estimation/segmentation is not always accurate. Please check it carefully. \nNow please continue to think in <think>...</think> and then decide whether to continue to generate the depth-estimation/segmentation in <depth-estimation>...</depth-estimation>/<segmentation>...</segmentation> or give the answer in <answer>...</answer>.\n"
-
-
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
     img.save(buf, format=fmt)  # 把图像写入内存缓冲区
@@ -80,47 +64,6 @@ def dict_to_device(dict: Dict, device):
         if isinstance(dict[key], torch.Tensor):
             dict[key] = dict[key].to(device)
     return dict
-
-
-def colorize_depth_maps(
-    depth_map, min_depth, max_depth, cmap="Spectral", valid_mask=None
-):
-    """
-    Colorize depth maps.
-    """
-    assert len(depth_map.shape) >= 2, "Invalid dimension"
-
-    if isinstance(depth_map, torch.Tensor):
-        depth = depth_map.detach().squeeze().numpy()
-    elif isinstance(depth_map, np.ndarray):
-        depth = depth_map.copy().squeeze()
-    # reshape to [ (B,) H, W ]
-    if depth.ndim < 3:
-        depth = depth[np.newaxis, :, :]
-
-    # colorize
-    cm = matplotlib.colormaps[cmap]
-    depth = ((depth - min_depth) / (max_depth - min_depth)).clip(0, 1)
-    img_colored_np = cm(depth, bytes=False)[:, :, :, 0:3]  # value from 0 to 1
-    img_colored_np = np.rollaxis(img_colored_np, 3, 1)
-
-    if valid_mask is not None:
-        if isinstance(depth_map, torch.Tensor):
-            valid_mask = valid_mask.detach().numpy()
-        valid_mask = valid_mask.squeeze()  # [H, W] or [B, H, W]
-        if valid_mask.ndim < 3:
-            valid_mask = valid_mask[np.newaxis, np.newaxis, :, :]
-        else:
-            valid_mask = valid_mask[:, np.newaxis, :, :]
-        valid_mask = np.repeat(valid_mask, 3, axis=1)
-        img_colored_np[~valid_mask] = 0
-
-    if isinstance(depth_map, torch.Tensor):
-        img_colored = torch.from_numpy(img_colored_np).float()
-    elif isinstance(depth_map, np.ndarray):
-        img_colored = img_colored_np
-
-    return img_colored
 
 
 def chw2hwc(chw):
@@ -245,7 +188,6 @@ class InterleaveInferencer:
         cfg_renorm_type="global",
         num_timesteps=50,
         timestep_shift=3.0,
-        out_depth=False,
     ):
         past_key_values = gen_context["past_key_values"]
         kv_lens = gen_context["kv_lens"]
@@ -316,36 +258,9 @@ class InterleaveInferencer:
             ],
         )
 
-        if not out_depth:
-            image = self.decode_image(unpacked_latent[0], image_shape)
-            return image
-        else:
-            image = self.decode_depth(unpacked_latent[0], image_shape)
-            return image
-
-    def decode_depth(self, latent, image_shape):
-        # decode latent to depth map
-        H, W = image_shape
-        h, w = H // self.model.latent_downsample, W // self.model.latent_downsample
-
-        latent = latent.reshape(
-            1,
-            h,
-            w,
-            self.model.latent_patch_size,
-            self.model.latent_patch_size,
-            self.model.latent_channel,
-        )
-        latent = torch.einsum("nhwpqc->nchpwq", latent)
-        latent = latent.reshape(
-            1,
-            self.model.latent_channel,
-            h * self.model.latent_patch_size,
-            w * self.model.latent_patch_size,
-        )
-        image = self.vae_model.decode(latent)
-        image = (image * 0.5 + 0.5).clamp(0, 1)[0].permute(1, 2, 0).mean(dim=-1)
+        image = self.decode_image(unpacked_latent[0], image_shape)
         return image
+
 
     def decode_image(self, latent, image_shape):
         # decode latent to image
@@ -677,9 +592,9 @@ class InterleaveInferencer:
             output_list.append(system_prompt)
 
             answer_pattern = r"<answer>(.*?)</answer>"
-            depth_estimate_pattern = r"<depth-estimation>(.*?)</depth-estimation>"
-            segmentation_pattern = r"<segmentation>(.*?)</segmentation>"
+            restore_pattern = r"<image_restore>"
 
+            # 处理初始输入列表
             for input_term in input_lists:
                 if isinstance(input_term, str):
                     cfg_text_context = deepcopy(gen_context)
@@ -702,6 +617,7 @@ class InterleaveInferencer:
             inter_num = 0
             while True:
                 inter_num += 1
+                # 1. 生成推理文本
                 gen_text = self.gen_text(
                     gen_context,
                     do_sample=do_sample,
@@ -710,6 +626,8 @@ class InterleaveInferencer:
                     top_p=top_p,
                 )
                 output_list.append(gen_text)
+                
+                # 检查是否达成最终答案
                 answer_match = re.search(answer_pattern, gen_text, re.DOTALL)
                 if answer_match:
                     return output_list
@@ -717,309 +635,24 @@ class InterleaveInferencer:
                 if inter_num >= max_inter_num:
                     break
 
-                depth_match = re.search(depth_estimate_pattern, gen_text, re.DOTALL)
-                segmentation_match = re.search(
-                    segmentation_pattern, gen_text, re.DOTALL
-                )
+                # 2. 检查是否需要调用图像恢复工具
+                restore_match = re.search(restore_pattern, gen_text)
 
-                if depth_match or segmentation_match:
-                    if depth_match:
-                        entire_depth_prompt = depth_match.group(0)
-                        edit_cfg_prompt = gen_text.replace(entire_depth_prompt, "")
-                        cfg_text_context = deepcopy(gen_context)
-                        cfg_text_context = self.update_context_text(
-                            edit_cfg_prompt, cfg_text_context
-                        )
-                        gen_context = self.update_context_text(gen_text, gen_context)
-                        edit_cfg_img_context = self.update_context_text(
-                            gen_text, edit_cfg_img_context
-                        )
-                        img = (
-                            self.gen_image(
-                                image_shapes,
-                                gen_context=gen_context,
-                                cfg_text_precontext=cfg_text_context,
-                                cfg_img_precontext=edit_cfg_img_context,
-                                cfg_text_scale=cfg_text_scale,
-                                cfg_img_scale=cfg_img_scale,
-                                cfg_interval=cfg_interval,
-                                timestep_shift=timestep_shift,
-                                num_timesteps=num_timesteps,
-                                cfg_renorm_min=cfg_renorm_min,
-                                cfg_renorm_type=cfg_renorm_type,
-                                out_depth=True,
-                            )
-                            .cpu()
-                            .float()
-                        )
-                        depth_colored = (
-                            colorize_depth_maps(img, 0, 1).squeeze().numpy()
-                        )  # [3, H, W], value in (0, 1)
-                        depth_colored = (depth_colored * 255).astype(np.uint8)
-                        depth_colored_hwc = chw2hwc(depth_colored)
-                        img = Image.fromarray(depth_colored_hwc)
-                    elif segmentation_match:
-                        entire_segmentation_prompt = segmentation_match.group(0)
-                        edit_cfg_prompt = gen_text.replace(
-                            entire_segmentation_prompt, ""
-                        )
-                        cfg_text_context = deepcopy(gen_context)
-                        cfg_text_context = self.update_context_text(
-                            edit_cfg_prompt, cfg_text_context
-                        )
-                        gen_context = self.update_context_text(gen_text, gen_context)
-                        edit_cfg_img_context = self.update_context_text(
-                            gen_text, edit_cfg_img_context
-                        )
-                        img = self.gen_image(
-                            image_shapes,
-                            gen_context=gen_context,
-                            cfg_text_precontext=cfg_text_context,
-                            cfg_img_precontext=edit_cfg_img_context,
-                            cfg_text_scale=cfg_text_scale,
-                            cfg_img_scale=cfg_img_scale,
-                            cfg_interval=cfg_interval,
-                            timestep_shift=timestep_shift,
-                            num_timesteps=num_timesteps,
-                            cfg_renorm_min=cfg_renorm_min,
-                            cfg_renorm_type=cfg_renorm_type,
-                        )
-
-                    output_list.append(pil_img2rgb(img))
-                    output_list.append(REFLECTION_PROMPT)
-                    img = self.vae_transform.resize_transform(pil_img2rgb(img))
-                    gen_context = self.update_context_image(img, gen_context, vae=False)
-                    gen_context = self.update_context_text(
-                        REFLECTION_PROMPT, gen_context
-                    )
+                if restore_match:
+                    print("restore!")
+                    # 准备生图的 CFG 上下文
+                    edit_cfg_prompt = gen_text.replace("<image_restore>", "")
                     cfg_text_context = deepcopy(gen_context)
-                    edit_cfg_img_context = self.update_context_image(
-                        img, edit_cfg_img_context, vae=False
+                    cfg_text_context = self.update_context_text(
+                        edit_cfg_prompt, cfg_text_context
                     )
+                    
+                    gen_context = self.update_context_text(gen_text, gen_context)
                     edit_cfg_img_context = self.update_context_text(
-                        REFLECTION_PROMPT, edit_cfg_img_context
+                        gen_text, edit_cfg_img_context
                     )
-
-        return output_list
-
-    @torch.no_grad()
-    def depth_image_generation(
-        self,
-        input_lists: List[Union[str, Image.Image]],
-        cfg_text_scale=4.0,
-        cfg_img_scale=2.0,
-        cfg_interval=[0.4, 1.0],
-        timestep_shift=3.0,
-        num_timesteps=50,
-        cfg_renorm_min=0.0,
-        cfg_renorm_type="global",
-        image_shapes=(1024, 1024),
-    ) -> List[Union[str, Image.Image]]:
-        # generate the visualization of the depth map of the image directly
-        # the input_list should have the input image and the depth generation prompt: DEPTH_PROMPT
-
-        output_list = []
-        gen_context = self.init_gen_context()
-        cfg_text_context = deepcopy(gen_context)
-        edit_cfg_img_context = deepcopy(gen_context)
-
-        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
-            for input_term in input_lists:
-                if isinstance(input_term, str):
-                    cfg_text_context = deepcopy(gen_context)
-                    gen_context = self.update_context_text(input_term, gen_context)
-                    edit_cfg_img_context = self.update_context_text(
-                        input_term, edit_cfg_img_context
-                    )
-                    output_list.append(input_term)
-                elif isinstance(input_term, Image.Image):
-                    input_term = self.vae_transform.resize_transform(
-                        pil_img2rgb(input_term)
-                    )
-                    gen_context = self.update_context_image(input_term, gen_context)
-                    image_shapes = input_term.size[::-1]
-                    cfg_text_context = deepcopy(gen_context)
-                    output_list.append(input_term)
-                else:
-                    raise ValueError(f"Unsupported input type: {type(input_term)}")
-            img = (
-                self.gen_image(
-                    image_shapes,
-                    gen_context=gen_context,
-                    cfg_text_precontext=cfg_text_context,
-                    cfg_img_precontext=edit_cfg_img_context,
-                    cfg_text_scale=cfg_text_scale,
-                    cfg_img_scale=cfg_img_scale,
-                    cfg_interval=cfg_interval,
-                    timestep_shift=timestep_shift,
-                    num_timesteps=num_timesteps,
-                    cfg_renorm_min=cfg_renorm_min,
-                    cfg_renorm_type=cfg_renorm_type,
-                    out_depth=True,
-                )
-                .cpu()
-                .float()
-            )
-            depth_colored = (
-                colorize_depth_maps(img, 0, 1).squeeze().numpy()
-            )  # [3, H, W], value in (0, 1)
-            depth_colored = (depth_colored * 255).astype(np.uint8)
-            depth_colored_hwc = chw2hwc(depth_colored)
-            img = Image.fromarray(depth_colored_hwc)
-
-        return pil_img2rgb(img)
-
-    @torch.no_grad()
-    def segmentation_generation(
-        self,
-        input_lists: List[Union[str, Image.Image]],
-        cfg_text_scale=4.0,
-        cfg_img_scale=2.0,
-        cfg_interval=[0.4, 1.0],
-        timestep_shift=3.0,
-        num_timesteps=30,
-        cfg_renorm_min=0.0,
-        cfg_renorm_type="global",
-        image_shapes=(1024, 1024),
-    ) -> List[Union[str, Image.Image]]:
-        # generate the visualization of the segmentation map of the image directly
-        # the input_list should have the input image and the segmentation generation prompt: SEGMENTATION_PROMPT
-
-        output_list = []
-        gen_context = self.init_gen_context()
-        cfg_text_context = deepcopy(gen_context)
-        edit_cfg_img_context = deepcopy(gen_context)
-
-        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
-            for input_term in input_lists:
-                if isinstance(input_term, str):
-                    cfg_text_context = deepcopy(gen_context)
-                    gen_context = self.update_context_text(input_term, gen_context)
-                    edit_cfg_img_context = self.update_context_text(
-                        input_term, edit_cfg_img_context
-                    )
-                    output_list.append(input_term)
-                elif isinstance(input_term, Image.Image):
-                    input_term = self.vae_transform.resize_transform(
-                        pil_img2rgb(input_term)
-                    )
-                    gen_context = self.update_context_image(input_term, gen_context)
-                    image_shapes = input_term.size[::-1]
-                    cfg_text_context = deepcopy(gen_context)
-                    output_list.append(input_term)
-                else:
-                    raise ValueError(f"Unsupported input type: {type(input_term)}")
-
-            img = self.gen_image(
-                image_shapes,
-                gen_context=gen_context,
-                cfg_text_precontext=cfg_text_context,
-                cfg_img_precontext=edit_cfg_img_context,
-                cfg_text_scale=cfg_text_scale,
-                cfg_img_scale=cfg_img_scale,
-                cfg_interval=cfg_interval,
-                timestep_shift=timestep_shift,
-                num_timesteps=num_timesteps,
-                cfg_renorm_min=cfg_renorm_min,
-                cfg_renorm_type=cfg_renorm_type,
-            )
-
-        return pil_img2rgb(img)
-
-    @torch.no_grad()
-    def image_reason_tool_condition(
-        self,
-        input_lists: List[Union[str, Image.Image]],
-        max_inter_num=3,
-        max_think_token_n=2048,
-        do_sample=False,
-        text_temperature=0.3,
-        cfg_text_scale=4.0,
-        cfg_img_scale=2.0,
-        cfg_interval=[0.4, 1.0],
-        timestep_shift=3.0,
-        num_timesteps=30,
-        cfg_renorm_min=0.0,
-        cfg_renorm_type="global",
-        image_shapes=(1024, 1024),
-        top_p=1.0,
-        **kwargs,
-    ) -> List[Union[str, Image.Image]]:
-        # perception enhancement answer function
-        # it will first generate the depth map of the image, then generate the segmentation map of the image,
-        # then use the depth map and segmentation map to generate the answer without reasoning
-
-        output_list = []
-        gen_context = self.init_gen_context()
-        cfg_text_context = deepcopy(gen_context)
-        edit_cfg_img_context = deepcopy(gen_context)
-
-        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
-            system_prompt = IMAGE_REASON_SYSTEM_PROMPT
-            gen_context = self.update_context_text(system_prompt, gen_context)
-            edit_cfg_img_context = self.update_context_text(
-                system_prompt, edit_cfg_img_context
-            )
-            output_list.append(system_prompt)
-
-            for input_term in input_lists:
-                if isinstance(input_term, str):
-                    cfg_text_context = deepcopy(gen_context)
-                    gen_context = self.update_context_text(input_term, gen_context)
-                    edit_cfg_img_context = self.update_context_text(
-                        input_term, edit_cfg_img_context
-                    )
-                    output_list.append(input_term)
-                elif isinstance(input_term, Image.Image):
-                    input_term = self.vae_transform.resize_transform(
-                        pil_img2rgb(input_term)
-                    )
-                    gen_context = self.update_context_image(input_term, gen_context)
-                    image_shapes = input_term.size[::-1]
-                    cfg_text_context = deepcopy(gen_context)
-                    output_list.append(input_term)
-                else:
-                    raise ValueError(f"Unsupported input type: {type(input_term)}")
-
-            for it_num in range(3):
-                if it_num == 0:
-                    cfg_text_context = deepcopy(gen_context)
-                    edit_cfg_img_context = self.update_context_text(
-                        DEPTH_PROMPT, edit_cfg_img_context
-                    )
-                    gen_context = self.update_context_text(DEPTH_PROMPT, gen_context)
-                    img = (
-                        self.gen_image(
-                            image_shapes,
-                            gen_context=gen_context,
-                            cfg_text_precontext=cfg_text_context,
-                            cfg_img_precontext=edit_cfg_img_context,
-                            cfg_text_scale=cfg_text_scale,
-                            cfg_img_scale=cfg_img_scale,
-                            cfg_interval=cfg_interval,
-                            timestep_shift=timestep_shift,
-                            num_timesteps=num_timesteps,
-                            cfg_renorm_min=cfg_renorm_min,
-                            cfg_renorm_type=cfg_renorm_type,
-                            out_depth=True,
-                        )
-                        .cpu()
-                        .float()
-                    )
-                    depth_colored = (
-                        colorize_depth_maps(img, 0, 1).squeeze().numpy()
-                    )  # [3, H, W], value in (0, 1)
-                    depth_colored = (depth_colored * 255).astype(np.uint8)
-                    depth_colored_hwc = chw2hwc(depth_colored)
-                    img = Image.fromarray(depth_colored_hwc)
-                elif it_num == 1:
-                    cfg_text_context = deepcopy(gen_context)
-                    edit_cfg_img_context = self.update_context_text(
-                        SEGMENTATION_PROMPT, edit_cfg_img_context
-                    )
-                    gen_context = self.update_context_text(
-                        SEGMENTATION_PROMPT, gen_context
-                    )
+                    
+                    # 3. 调用图像生成（恢复）工具
                     img = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
@@ -1033,25 +666,24 @@ class InterleaveInferencer:
                         cfg_renorm_min=cfg_renorm_min,
                         cfg_renorm_type=cfg_renorm_type,
                     )
-                else:
-                    gen_context = self.update_context_text("<answer>", gen_context)
-                    gen_text = self.gen_text(
-                        gen_context,
-                        do_sample=do_sample,
-                        temperature=text_temperature,
-                        max_length=max_think_token_n,
-                        top_p=top_p,
-                    )
-                    output_list.append("<answer>" + gen_text)
-                    return output_list
 
-                output_list.append(pil_img2rgb(img))
-                img = self.vae_transform.resize_transform(pil_img2rgb(img))
-                gen_context = self.update_context_image(img, gen_context, vae=False)
-                cfg_text_context = deepcopy(gen_context)
-                edit_cfg_img_context = self.update_context_image(
-                    img, edit_cfg_img_context, vae=False
-                )
+                    # 4. 反馈结果
+                    output_list.append(pil_img2rgb(img))
+                    
+                    # 将生成的图片转换并喂回模型 KV Cache，作为下一轮推理的依据
+                    img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
+                    gen_context = self.update_context_image(img_processed, gen_context, vae=False)
+                    
+                    # 同步更新 CFG 用的上下文
+                    cfg_text_context = deepcopy(gen_context)
+                    edit_cfg_img_context = self.update_context_image(
+                        img_processed, edit_cfg_img_context, vae=False
+                    )
+                else:
+                    break
+
+        return output_list
+
 
     @torch.no_grad()
     def text_reason(

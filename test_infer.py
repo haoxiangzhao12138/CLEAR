@@ -45,6 +45,7 @@ from modeling.autoencoder import load_ae
 
 # ================= 配置区 =================
 MODEL_PATH = "/root/CLEAR/models/BAGEL-7B-MoT"
+CHECKPOINT_PATH = "/root/CLEAR/results/20260126_102011_mix/0003000/ema.safetensors"
 DEVICE = "cuda:0"
 SAVE_ROOT = "visualizations"
 
@@ -61,11 +62,11 @@ IMAGE_DIR = "/root/CLEAR/datasets/processed_dataset/sft/corruption_images"
 MANUAL_INPUTS = [
     {
         "id": "manual_test_01",
-        "content": [Image.open("/root/CLEAR/datasets/processed_dataset/sft/corruption_images/chart2text_cauldron__cauldron_chart2text_images_chart2text_00000019.png.png"), 
-                    "I'd like to understand the message this graph is trying to highlight."]
+        "content": [Image.open("/root/CLEAR/datasets/processed_dataset/sft/corruption_images/chart2text_cauldron__cauldron_chart2text_images_chart2text_00002754.png.png"), 
+                    "Please clarify the meaning conveyed by this graph."]
     }
 ]
-# ==========================================
+
 # ================= 优化后的可视化模块 =================
 
 class BagelVisualizer:
@@ -240,7 +241,7 @@ vae_transform = ImageTransform(1024, 512, 16)
 vit_transform = ImageTransform(518, 224, 14)
 
 model = load_checkpoint_and_dispatch(
-    model, checkpoint=os.path.join(MODEL_PATH, "ema.safetensors"),
+    model, checkpoint=CHECKPOINT_PATH,
     device_map={"": DEVICE}, offload_buffers=False, dtype=torch.bfloat16,
 )
 model.eval()

@@ -18,33 +18,38 @@ The reasoning process is enclosed within <think> </think> tags, i.e. <think> rea
 GEN_THINK_SYSTEM_PROMPT = """You should first think about the planning process in the mind and then generate the image. 
 The planning process is enclosed within <think> </think> tags, i.e. <think> planning process here </think> image here"""
 
-INTERLEAVE_REASON_SYSTEM_PROMPT = """You are a specialized multimodal agent adept at handling low-quality or corrupted visual inputs. Your goal is to answer questions based on an input image that may suffer from degradations (e.g., blur, noise, occlusion, low resolution).
+INTERLEAVE_REASON_SYSTEM_PROMPT = """You are a specialized multimodal assistant. Your purpose is to solve visual question answering tasks by thinking step-by-step and utilizing an image restoration tool when necessary.
 
-# Tools
-You have access to a special token: **<image_restore>**.
-**Description:** Image restoration tool. It takes the current corrupted image as input and performs enhancement operations (such as deblurring, denoising, super-resolution, or inpainting) to return a high-quality, clearer version of the image. Use this tool ONLY when the image corruption prevents you from seeing the specific details required to answer the user's question.
+# Skills
 
-# Instruction
-1.  **Always start with a <think> tag.** Inside this tag, you must conduct a step-by-step reasoning process:
-    * **Analyze Image Quality:** Identify the type and severity of the corruption (e.g., "The image is heavily blurred," or "There is slight noise but the subject is visible").
-    * **Assess Information Sufficiency:** Compare the image quality against the specific requirements of the user's question.
-        * **Case A (Direct Answer):** If the image is corrupted but the answer is still visually evident (e.g., the user asks for the dominant color of a blurry car), **do not** use the tool. Proceed to answer.
-        * **Case B (Need Restoration):** If the corruption makes it impossible to extract the necessary information with confidence (e.g., the user asks for text on a blurry sign), you **must** use the restoration token.
-2.  **Tool Execution:**
-    * If you choose to use the tool, simply output the <image_restore> token.
-    * After receiving the tool result (the restored image), analyze the new visual information in the next turn's <think> block.
-3.  **Final Answer:**
-    * When no further tools are needed, provide your final response in the <answer> tag.
-    * The answer should be natural and direct.
-
-# Response Format Examples
-**Scenario 1: Image is too blurry to answer -> Call Tool**
-<think> The user is asking for the license plate number. I can see the car clearly, but the license plate area is heavily affected by motion blur, making the text indistinguishable. Since I cannot read the specific characters required to answer the question, I need to restore the image to recover these details. </think>
+You can trigger image restoration by generating the following special token sequence:
 <image_restore>
 
-**Scenario 2: Image is corrupted but answer is visible -> Direct Answer**
-<think> The user asks if there is a dog in the picture. Although the image has some "salt and pepper" noise, the silhouette and main features of a Golden Retriever are clearly visible in the center. The noise does not hinder my ability to classify the object. I can answer directly without restoration. </think>
-<answer> Yes, there is a dog in the picture. It appears to be a Golden Retriever sitting on the grass. </answer>
+This tool performs enhancement operations (e.g., deblurring, denoising) on the input image to reveal details that are currently obscured.
+
+# Instruction
+
+1. **Reasoning (`<think>`):** In each turn, you must start with a <think> tag. Inside, conduct a step-by-step reasoning process:
+   - **Analyze Image Quality:** Identify degradations (blur, noise, low resolution, etc.).
+   - **Assess Sufficiency:** Determine if the current image quality allows you to answer the question confidently.
+
+2. **Tool Usage:**
+   - If the degradation prevents you from seeing critical details required for the answer, you MUST trigger the restoration tool by outputting: <image_restore>.
+   - If the answer is visible despite the degradation, do NOT use the tool.
+
+3. **Answering (`<answer>`):**
+   - After reasoning (and potential restoration), provide your final response in the <answer> tag.
+   - The answer should be natural, concise, and direct.
+
+4. **Format:** Keep your output compact. Avoid unnecessary newlines between tags.
+
+The structure of your response should follow these patterns:
+
+**Scenario 1: Restoration Needed**
+<think>The image is heavily blurred, making the text unreadable. I need to restore it to extract the information.</think> <image_restore> <think>The restored image is clear. The text says "EXIT".</think><answer>The text on the sign is "EXIT".</answer>
+
+**Scenario 2: Direct Answer**
+<think>Although there is some noise, the red car is clearly visible in the foreground.</think><answer>The car is red.</answer>
 """
 
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
@@ -314,62 +319,6 @@ class InterleaveInferencer:
         output = output.split("<|im_end|>")[0].split("<|im_start|>")[1]
         return output
 
-    @torch.no_grad()
-    def depth_map_generation(
-        self,
-        input_lists: List[Union[str, Image.Image]],
-        cfg_text_scale=3.0,
-        cfg_img_scale=1.5,
-        cfg_interval=[0.4, 1.0],
-        timestep_shift=3.0,
-        num_timesteps=50,
-        cfg_renorm_min=0.0,
-        cfg_renorm_type="global",
-        image_shapes=(1024, 1024),
-    ) -> List[Union[str, Image.Image]]:
-        # generate the depth map for evaluation, not generate the visualization image
-
-        gen_context = self.init_gen_context()
-        cfg_text_context = deepcopy(gen_context)
-        cfg_img_context = deepcopy(gen_context)
-
-        with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
-            for input_term in input_lists:
-                if isinstance(input_term, str):
-                    cfg_text_context = deepcopy(gen_context)
-                    gen_context = self.update_context_text(input_term, gen_context)
-                    cfg_img_context = self.update_context_text(
-                        input_term, cfg_img_context
-                    )
-
-                elif isinstance(input_term, Image.Image):
-                    input_term = self.vae_transform.resize_transform(
-                        pil_img2rgb(input_term)
-                    )
-                    gen_context = self.update_context_image(
-                        input_term, gen_context, vae=True
-                    )
-
-                    image_shapes = input_term.size[::-1]
-                    cfg_text_context = deepcopy(gen_context)
-
-                else:
-                    raise ValueError(f"Unsupported input type: {type(input_term)}")
-
-            return self.gen_image(
-                image_shapes,
-                gen_context,
-                cfg_text_precontext=cfg_text_context,
-                cfg_img_precontext=cfg_img_context,
-                cfg_text_scale=cfg_text_scale,
-                cfg_img_scale=cfg_img_scale,
-                cfg_interval=cfg_interval,
-                timestep_shift=timestep_shift,
-                num_timesteps=num_timesteps,
-                cfg_renorm_min=cfg_renorm_min,
-                cfg_renorm_type=cfg_renorm_type,
-                out_depth=True,
-            )
 
     @torch.no_grad()
     def interleave_inference(
