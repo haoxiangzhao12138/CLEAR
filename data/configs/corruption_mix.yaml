@@ -11,7 +11,7 @@ reason_interleave_dataset:
     min_image_size: 224
   is_mandatory: True
   num_used_data:
-  - 3628
+  - 12619
   weight: 0.5
 
 reason_text_dataset:
@@ -27,7 +27,7 @@ reason_text_dataset:
     min_image_size: 224
   is_mandatory: True
   num_used_data:
-  - 23075
+  - 62581
   weight: 0.5
 
 # pure_text_dataset:

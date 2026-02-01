@@ -17,7 +17,7 @@ DATASET_INFO = {
             "clean_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/images",
             "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/corruption_images",
             "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_tool.jsonl",
-            "num_total_samples": 3628,
+            "num_total_samples": 12619,
         }
     },
     "reason_text_dataset":{
@@ -25,7 +25,7 @@ DATASET_INFO = {
             "clean_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/images",
             "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/corruption_images",
             "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_no_tool.jsonl",
-            "num_total_samples": 23075,
+            "num_total_samples": 62581,
         }
     },
     "pure_text_dataset": {
