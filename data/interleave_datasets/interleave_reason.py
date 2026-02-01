@@ -13,7 +13,11 @@ from .interleave_t2i_dataset import (
 from ..data_utils import pil_img2rgb
 import os
 from io import BytesIO
-
+from pathlib import Path
+import sys
+# 将上级目录添加到 sys.path
+sys.path.append(str(Path(__file__).parent.parent))
+from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE_REASON_SYSTEM_PROMPT, TEXT_REASON_SYSTEM_PROMPT, RESTORE_TOKEN
 
 Image.MAX_IMAGE_PIXELS = 200000000
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -21,53 +25,6 @@ MaximumDecompressedSize = 1024
 MegaByte = 2**20
 PngImagePlugin.MAX_TEXT_CHUNK = MaximumDecompressedSize * MegaByte
 
-RESTORE_TOKEN = "<image_restore>"
-
-INTERLEAVE_REASON_SYSTEM_PROMPT = """You are a specialized multimodal assistant. Your purpose is to solve visual question answering tasks by thinking step-by-step and utilizing an image restoration tool when necessary.
-
-# Skills
-
-You can trigger image restoration by generating the following special token sequence:
-<image_restore>
-
-This tool performs enhancement operations (e.g., deblurring, denoising) on the input image to reveal details that are currently obscured.
-
-# Instruction
-
-1. **Reasoning (`<think>`):** In each turn, you must start with a <think> tag. Inside, conduct a step-by-step reasoning process:
-   - **Analyze Image Quality:** Identify degradations (blur, noise, low resolution, etc.).
-   - **Assess Sufficiency:** Determine if the current image quality allows you to answer the question confidently.
-
-2. **Tool Usage:**
-   - If the degradation prevents you from seeing critical details required for the answer, you MUST trigger the restoration tool by outputting: <image_restore>.
-   - If the answer is visible despite the degradation, do NOT use the tool.
-
-3. **Answering (`<answer>`):**
-   - After reasoning (and potential restoration), provide your final response in the <answer> tag.
-   - The answer should be natural, concise, and direct.
-
-4. **Format:** Keep your output compact. Avoid unnecessary newlines between tags.
-
-The structure of your response should follow these patterns:
-
-**Scenario 1: Restoration Needed**
-<think>The image is heavily blurred, making the text unreadable. I need to restore it to extract the information.</think> <image_restore> <think>The restored image is clear. The text says "EXIT".</think><answer>The text on the sign is "EXIT".</answer>
-
-**Scenario 2: Direct Answer**
-<think>Although there is some noise, the red car is clearly visible in the foreground.</think><answer>The car is red.</answer>
-"""
-
-TEXT_REASON_SYSTEM_PROMPT = """You are a specialized multimodal language model. Your purpose is to solve visual question answering tasks by thinking step-by-step.
-
-# Instruction
-
-1. You should first think with <think> tag. In this tag, you need to conduct a step-by-step reasoning process about the image and question.
-2. If you think that you could find the right answer, you can answer in <answer> tag. You need to provide a concise summary of your reasoning process that leads to the final answer.
-
-The structure of your response should be like this:
-<think> thinking process satisfying the Instruction 1 </think>
-<answer> answer satisfying the Instruction 2 </answer>
-"""
 
 
 def base64_to_image(base64_str):

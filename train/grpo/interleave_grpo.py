@@ -1,22 +1,7 @@
-# Copyright 2025 The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 import re
 from datetime import datetime
 from dataclasses import dataclass, field
-from math_verify import parse, verify
 from train.grpo.bagel_interleave_grpo_trainer import (
     BagelInterleaveGRPOTrainer,
 )
@@ -47,8 +32,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from copy import deepcopy
 from collections import defaultdict
-
-REFLECTION_PROMPT = "\nHere is the result of the depth-estimation/segmentation. Please note that the result of the depth-estimation/segmentation is not always accurate. Please check it carefully. \nNow please continue to think in <think>...</think> and then decide whether to continue to generate the depth-estimation/segmentation in <depth-estimation>...</depth-estimation>/<segmentation>...</segmentation> or give the answer in <answer>...</answer>.\n"
 
 
 @dataclass
@@ -220,80 +203,9 @@ class GRPOTrainingArguments(GRPOConfig):
     )
 
 
-def accuracy_reward(completions, solution, **kwargs):
-    """Reward function that checks if the completion is correct using either symbolic verification or exact string matching."""
-    answer_list = []
-    for i in range(len(completions)):
-        answer_list.append(completions[i][-1].strip())
-
-    rewards = []
-    current_time = datetime.now().strftime("%d-%H-%M-%S-%f")
-    for content, sol in zip(answer_list, solution):
-        reward = 0.0
-        # Try symbolic verification first
-        try:
-            answer = parse(content)
-            if float(verify(answer, parse(sol))) > 0:
-                reward = 1.0
-        except Exception:
-            pass  # Continue to next verification method if this fails
-
-        # If symbolic verification failed, try string matching
-        if reward == 0.0:
-            try:
-                # Extract answer from solution if it has think/answer tags
-                sol_match = re.search(r"<answer>([\s\S]*?)</answer>", sol)
-                ground_truth = sol_match.group(1).strip() if sol_match else sol
-
-                # Extract answer from content if it has think/answer tags
-                content_match = re.search(r"<answer>([\s\S]*?)</answer>", content)
-                student_answer = (
-                    content_match.group(1).strip() if content_match else content
-                )
-                student_answer = student_answer.strip().lower()
-                ground_truth = ground_truth.strip().lower()
-                # print(f"ground truth: {ground_truth}, student answer: {student_answer}")
-                if len(student_answer) == 0 or len(ground_truth) == 0:
-                    reward = 0.0
-                elif student_answer.startswith("yes") and ground_truth.startswith(
-                    "yes"
-                ):
-                    reward = 1.0
-                elif student_answer.startswith("no") and ground_truth.startswith("no"):
-                    reward = 1.0
-                elif student_answer[0] == ground_truth[0] and student_answer[0] in [
-                    "a",
-                    "b",
-                    "c",
-                    "d",
-                    "e",
-                ]:
-                    reward = 1.0
-                elif student_answer == ground_truth:
-                    reward = 1.0
-                else:
-                    reward = 0.0
-            except Exception:
-                pass  # Keep reward as 0.0 if both methods fail
-
-        rewards.append(reward)
-        if os.getenv("DEBUG_MODE") == "true":
-            log_path = os.getenv("LOG_PATH")
-            # local_rank = int(os.getenv("LOCAL_RANK", 0))
-            with open(log_path, "a") as f:
-                f.write(
-                    f"------------- {current_time} Accuracy reward: {reward} -------------\n"
-                )
-                f.write(f"Content: {content}\n")
-                f.write(f"Solution: {sol}\n")
-    return rewards
-
-
 def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
     result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    seg_pattern = r"<think>.*?</think>\s*<segmentation>.*?</segmentation>"
-    depth_pattern = r"<think>.*?</think>\s*<depth-estimation>.*?</depth-estimation>"
     # reason_pattern = r"<think>.*?</think>"
     reward_list = []
     for i in range(len(completions)):
@@ -456,37 +368,6 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
     return results_float
 
 
-# def exploration_guided_reward(completions, flag, data_id, **kwargs):
-#     """Reward function that checks if the completion has a specific format."""
-#     seg_pattern = r"<think>.*?</think>\s*<segmentation>.*?</segmentation>"
-#     depth_pattern = r"<think>.*?</think>\s*<depth-estimation>.*?</depth-estimation>"
-#     reward_list = []
-#     thrshold = 4
-#     for i in range(len(completions)):
-#         match_flag = False
-#         completions[i] = completions[i][3:]
-#         for j in range(len(completions[i])):
-#             if type(completions[i][j]) == str and j != len(completions[i]) - 1:
-#                 if completions[i][j] == REFLECTION_PROMPT:
-#                     continue
-#                 seg_match = re.fullmatch(
-#                     seg_pattern, completions[i][j].strip(), re.DOTALL
-#                 )
-#                 depth_match = re.fullmatch(
-#                     depth_pattern, completions[i][j].strip(), re.DOTALL
-#                 )
-#                 if seg_match or depth_match:
-#                     match_flag = True
-#                     break
-#         if flag[i] == "positive" and match_flag:
-#             reward_list.append(0.2)
-#         elif flag[i] == "negative" and match_flag:
-#             reward_list.append(-0.2)
-#         else:
-#             reward_list.append(0.0)
-#     return reward_list
-
-
 def exploration_guided_reward(completions, flag, data_id, **kwargs):
     """
     规则（按 data_id 分组）：
@@ -545,32 +426,6 @@ def exploration_guided_reward(completions, flag, data_id, **kwargs):
         # count == thrshold 时，全为 0.0（保持默认）
 
     return reward_list
-
-
-def acc_reward(completions, solution, question, **kwargs) -> float:
-    results_float = []
-    for i in range(len(completions)):
-        if type(completions[i][-1]) is not str:
-            return [0.0] * len(completions)
-        content = completions[i][-1].strip()
-        content_match = re.search(r"<answer>([\s\S]*?)</answer>", content, re.DOTALL)
-        if not content_match:
-            results_float.append(0.0)
-            continue
-        student_answer = content_match.group(1).strip()
-        answer = re.search(r"\\boxed\{(.*?)\}", student_answer, re.DOTALL)
-        if not answer:
-            results_float.append(0.0)
-            continue
-        answer = answer.group(1).strip().lower()
-        ground_truth = solution[i].strip()
-        if ground_truth.startswith("("):
-            ground_truth = ground_truth[1]
-        if answer == ground_truth:
-            results_float.append(1.0)
-        else:
-            results_float.append(0.0)
-    return results_float
 
 
 reward_funcs_registry = {

@@ -10,33 +10,33 @@
         }
     },
     "data": {
-        "MME_LOW_LEVEL_HIGH": {
+        "MME": {
             "class": "ImageYORNDataset",
-            "dataset": "MME_LOW_LEVEL_HIGH"
+            "dataset": "MME"
         },
-        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
+        "MMBench_DEV_EN_V11": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+            "dataset": "MMBench_DEV_EN_V11"
         },
-        "MMVet_LOW_LEVEL_HIGH": {
+        "MMVet": {
             "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_HIGH"
+            "dataset": "MMVet"
         },
-        "MMVP_LOW_LEVEL_HIGH": {
+        "MMVP": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_HIGH"
+            "dataset": "MMVP"
         },
-        "CV-Bench-2D_LOW_LEVEL_HIGH": {
+        "CV-Bench-2D": {
             "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
+            "dataset": "CV-Bench-2D"
         },
-        "MMStar_LOW_LEVEL_HIGH": {
+        "MMStar": {
             "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_HIGH"
+            "dataset": "MMStar"
         },
-        "RealWorldQA_LOW_LEVEL_HIGH": {
+        "RealWorldQA": {
             "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
+            "dataset": "RealWorldQA"
         }
     }
 }
