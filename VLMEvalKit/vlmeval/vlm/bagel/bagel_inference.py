@@ -28,7 +28,7 @@ from datetime import datetime
 import random
 import string
 import json
-
+import re
 
 def ensure_image_rgb(image: str) -> Image.Image:
     """
@@ -245,11 +245,15 @@ class BagelInference(BaseModel):
                 input_lists=input_lists, **self.inference_hyper
             )
             response = output_list[-1].strip()
-        else:
+        elif self.reasoning_mode == "text":
             output_list = self.inferencer.text_reason(
                 input_lists=input_lists, **self.inference_hyper
             )
-            response = output_list[-1].split("</think>")[-1].strip()
+            text = output_list[-1]
+            match = re.search(r"<answer>(.*?)</answer>", text, re.DOTALL)
+            response = match.group(1).strip() if match else ""
+        else:
+            raise ValueError(f"Invalid reasoning mode: {self.reasoning_mode}")
 
         if self.verbose:
             print(f"\033[32m{output_list}\033[0m")

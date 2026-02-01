@@ -11,5 +11,5 @@ pure_text_dataset:
     min_image_size: 224
   is_mandatory: false
   num_used_data:
-  - 9746
+  - 12000
   weight: 0.5

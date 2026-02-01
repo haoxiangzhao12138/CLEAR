@@ -31,8 +31,8 @@ DATASET_INFO = {
     "pure_text_dataset": {
         "pure_text_dataset": {
             "corrupted_image_dir": "/root/CLEAR/datasets/processed_dataset/sft/corruption_images",
-            "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/pure_text_data.jsonl",
-            "num_total_samples": 9746,
+            "jsonl_path": "/root/CLEAR/datasets/processed_dataset/sft/sft_pure_text.jsonl",
+            "num_total_samples": 12000,
         }
     },
 
