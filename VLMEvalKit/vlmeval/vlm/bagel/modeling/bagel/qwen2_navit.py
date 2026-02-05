@@ -1192,7 +1192,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
 
         # Initialize weights and apply final processing
-        self.gradient_checkpointing = False
+        self.gradient_checkpointing = True
         self.post_init()
 
     def forward(self, *args, **kwargs):

@@ -1,17 +1,3 @@
-# Copyright 2025 The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from typing import Any, Callable, Optional, Union
 from peft import PeftConfig
 import torch.nn.functional as F
@@ -428,12 +414,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         self.vae_model = vae_model.to(self.accelerator.device)
         self.vae_model.eval()
         self.vae_model.requires_grad_(False)
-        print(f"max_grad_norm: {args.max_grad_norm}")
+        # print(f"max_grad_norm: {args.max_grad_norm}")
 
-    # 这是 BagelGRPOTrainer 类中重写的一个核心方法
     def _generate_and_score_completions(
-        self, inputs: list[dict[str, Union[torch.Tensor, Any]]]
-    ) -> dict[str, Union[torch.Tensor, Any]]:
+            self, inputs: list[dict[str, Union[torch.Tensor, Any]]]
+        ) -> dict[str, Union[torch.Tensor, Any]]:
         # 获取当前设备（CPU/GPU）
         device = self.accelerator.device
         # 确定当前是训练模式还是评估模式
@@ -441,16 +426,12 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 初始化一个列表，用于存储处理后的提示 token ID
         input_list = []
         id_list = []
-        depth_buffer = {}
-        segmentation_buffer = {}
 
         for example in inputs:
             input_list.append(
                 [example["image"], example["question"], example["data_id"]]
             )
             id_list.append(example["data_id"])
-            depth_buffer[example["data_id"]] = None
-            segmentation_buffer[example["data_id"]] = None
 
         start_time = time.time()
         # --- 生成补全 (Completion Generation) ---
@@ -479,13 +460,14 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 is_eos = []
                 completions_tokens = []
                 sequence_length = []
-                segmentation_num_list = []
-                depth_num_list = []
-                seg_pattern = r"<think>.*?</think>\s*<segmentation>.*?</segmentation>"
-                depth_pattern = (
-                    r"<think>.*?</think>\s*<depth-estimation>.*?</depth-estimation>"
-                )
+                
+                # [修改点 2] 初始化 image_restore 的计数列表
+                image_restore_num_list = []
+                
+                # [修改点 3] 定义目标 Token 和 Answer 正则
+                restore_token = "<image_restore>"
                 result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
+
                 for example in input_list:
                     output = inferencer.interleave_reason_tool_condition(
                         example[:2],
@@ -504,31 +486,32 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                     else:
                         is_eos.append(False)
 
-                    seg_num = 0
-                    depth_num = 0
+                    # [修改点 4] 统计 <image_restore> 出现的次数
+                    restore_num = 0
+                    # 从第3个元素开始遍历（跳过 prompt 部分）
                     for i in range(3, len(output)):
                         item = output[i]
                         if isinstance(item, str):
-                            seg_match = re.search(seg_pattern, item, re.DOTALL)
-                            depth_match = re.search(depth_pattern, item, re.DOTALL)
-                            if seg_match:
-                                seg_num += 1
-                            if depth_match:
-                                depth_num += 1
-                    depth_num_list.append(depth_num)
-                    segmentation_num_list.append(seg_num)
+                            # 直接统计字符串中 token 出现的次数，不需要正则
+                            restore_num += item.count(restore_token)
+                    
+                    image_restore_num_list.append(restore_num)
+
                 input_dict_list = self.output_transfer(
                     output_list, device, id_list
                 )  # 转换输出为 dict{str: tensor}
+                
                 for i in range(len(input_dict_list)):
                     completions_tokens.append(input_dict_list[i]["completions_tokens"])
                     sequence_length.append(input_dict_list[i]["sequence_length"])
                 completions_tokens = torch.tensor(completions_tokens).to(device)
                 sequence_length = torch.tensor(sequence_length).to(device)
                 is_eos = torch.tensor(is_eos).to(device)
-                depth_nums = torch.tensor(depth_num_list).to(device)
-                segmentation_nums = torch.tensor(segmentation_num_list).to(device)
-        print(f"interleave_reason_tool_condition time: {time.time() - start_time}")
+                
+                # [修改点 5] 将统计结果转换为 Tensor
+                image_restore_nums = torch.tensor(image_restore_num_list).to(device)
+
+        # print(f"interleave_reason_tool_condition time: {time.time() - start_time}")
 
         # --- 计算 Log Probabilities (for KL divergence or ratio) ---
         # 禁用梯度计算，因为我们只关心 log probabilities
@@ -592,29 +575,9 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 rewards_per_func[:, i] = torch.tensor(
                     output_reward_func, dtype=torch.float32, device=device
                 )
-        print(f"reward_funcs time: {time.time() - start_time}")
-
-        # # ========= 在分布式 gather 之前插入保存逻辑 =========
-        # os.makedirs(os.path.join(self.args.save_dir, "samples", mode), exist_ok=True)
-        # step_val = getattr(self.state, "global_step", None)
-        # if step_val is None:
-        #     step_val = getattr(self, "_step", 0)
-        # base_dir = os.path.join(self.args.save_dir, "samples", mode)
-        # for i in range(len(output_list)):
-        #     save_list_with_images(
-        #         input_list=output_list[i],
-        #         target_dir=base_dir,
-        #         raw_image=inputs[i]["image"],
-        #         step=step_val,
-        #         question=inputs[i]["question"],
-        #         answer=inputs[i]["solution"],
-        #         rewards=rewards_per_func[i].detach().float().tolist(),
-        #         reward_func_names=self.reward_func_names,
-        #         data_idx=id_list[i],
-        #     )
+        # print(f"reward_funcs time: {time.time() - start_time}")
 
         # --- 检查并警告 ---
-        # If all reward functions return None for a given row, issue a detailed warning
         # 检查是否有任何一行的所有奖励函数都返回了 NaN（即 None）
         if torch.isnan(rewards_per_func).all(dim=1).any():
             # 获取第一个全为 NaN 的行索引
@@ -701,14 +664,15 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             1 - agg_terminated_with_eos.float().mean().item()
         )
 
-        depth_nums = self.accelerator.gather_for_metrics(depth_nums)
-        self._metrics[mode]["depth_nums"].append(depth_nums.float().mean().item())
-        segmentation_nums = self.accelerator.gather_for_metrics(segmentation_nums)
-        self._metrics[mode]["segmentation_nums"].append(
-            segmentation_nums.float().mean().item()
+        # [修改点 6] 记录 image_restore 的统计信息
+        image_restore_nums = self.accelerator.gather_for_metrics(image_restore_nums)
+        self._metrics[mode]["image_restore_nums"].append(
+            image_restore_nums.float().mean().item()
         )
+        
+        # 将 total_gen_nums 更新为仅包含 restore 次数
         self._metrics[mode]["total_gen_nums"].append(
-            depth_nums.float().mean().item() + segmentation_nums.float().mean().item()
+            image_restore_nums.float().mean().item()
         )
 
         # Calculate mean reward per function, but only for samples where the function was applied (non-NaN values)

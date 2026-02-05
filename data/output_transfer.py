@@ -502,7 +502,7 @@ class OutputTransfer:
                 }
             )
 
-            image_tensor = self.transform(image, is_rgb=True)
+            image_tensor = self.transform(image)
             height, width = image_tensor.shape[1:]
             data["num_tokens"] += width * height // self.transform.stride**2
             data["image_tensor_list"].append(image_tensor.clone())

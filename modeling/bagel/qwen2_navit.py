@@ -199,6 +199,7 @@ class Qwen2Config(_Qwen2Config):
         self.qk_norm = qk_norm
         self.layer_module = layer_module
         self.freeze_und = freeze_und
+        self.gradient_checkpointing = True
 
 
 class NaiveCache:
@@ -1192,7 +1193,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
 
         # # 添加gradient checkpointing标志
-        # self.gradient_checkpointing = config.gradient_checkpointing
+        self.gradient_checkpointing = config.gradient_checkpointing
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1234,61 +1235,61 @@ class Qwen2Model(Qwen2PreTrainedModel):
                 packed_gen_token_indexes=packed_gen_token_indexes,
             )
 
-        for decoder_layer in self.layers:
-            packed_sequence = decoder_layer(
-                packed_sequence=packed_sequence,
-                sample_lens=sample_lens,
-                attention_mask=attention_mask,
-                packed_position_embeddings=packed_position_embeddings,
-                **extra_inputs,
-            )
+        # for decoder_layer in self.layers:
+        #     packed_sequence = decoder_layer(
+        #         packed_sequence=packed_sequence,
+        #         sample_lens=sample_lens,
+        #         attention_mask=attention_mask,
+        #         packed_position_embeddings=packed_position_embeddings,
+        #         **extra_inputs,
+        #     )
 
         # 如果启用gradient checkpointing
-        # if self.gradient_checkpointing and self.training:
-        #     # 定义用于checkpoint的自定义前向函数
-        #     def create_custom_forward(module):
-        #         def custom_forward(*inputs):
-        #             # inputs应该包含所有需要的参数
-        #             return module(
-        #                 packed_sequence=inputs[0],
-        #                 sample_lens=inputs[1],
-        #                 attention_mask=inputs[2],
-        #                 packed_position_embeddings=inputs[3],
-        #                 **extra_inputs,
-        #             )
+        if self.gradient_checkpointing and self.training:
+            # 定义用于checkpoint的自定义前向函数
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    # inputs应该包含所有需要的参数
+                    return module(
+                        packed_sequence=inputs[0],
+                        sample_lens=inputs[1],
+                        attention_mask=inputs[2],
+                        packed_position_embeddings=inputs[3],
+                        **extra_inputs,
+                    )
 
-        #         return custom_forward
+                return custom_forward
 
-        #     # 逐层应用checkpointing
-        #     for i, decoder_layer in enumerate(self.layers):
-        #         # 确保输入需要梯度
-        #         if packed_sequence.requires_grad:
-        #             packed_sequence = checkpoint.checkpoint(
-        #                 create_custom_forward(decoder_layer),
-        #                 packed_sequence,
-        #                 sample_lens,
-        #                 attention_mask,
-        #                 packed_position_embeddings,
-        #                 use_reentrant=False,  # 推荐使用非重入模式，更稳定
-        #             )
-        #         else:
-        #             packed_sequence = decoder_layer(
-        #                 packed_sequence=packed_sequence,
-        #                 sample_lens=sample_lens,
-        #                 attention_mask=attention_mask,
-        #                 packed_position_embeddings=packed_position_embeddings,
-        #                 **extra_inputs,
-        #             )
-        # else:
-        #     # 原有的前向传播逻辑
-        #     for decoder_layer in self.layers:
-        #         packed_sequence = decoder_layer(
-        #             packed_sequence=packed_sequence,
-        #             sample_lens=sample_lens,
-        #             attention_mask=attention_mask,
-        #             packed_position_embeddings=packed_position_embeddings,
-        #             **extra_inputs,
-        #         )
+            # 逐层应用checkpointing
+            for i, decoder_layer in enumerate(self.layers):
+                # 确保输入需要梯度
+                if packed_sequence.requires_grad:
+                    packed_sequence = checkpoint.checkpoint(
+                        create_custom_forward(decoder_layer),
+                        packed_sequence,
+                        sample_lens,
+                        attention_mask,
+                        packed_position_embeddings,
+                        use_reentrant=False,  # 推荐使用非重入模式，更稳定
+                    )
+                else:
+                    packed_sequence = decoder_layer(
+                        packed_sequence=packed_sequence,
+                        sample_lens=sample_lens,
+                        attention_mask=attention_mask,
+                        packed_position_embeddings=packed_position_embeddings,
+                        **extra_inputs,
+                    )
+        else:
+            # 原有的前向传播逻辑
+            for decoder_layer in self.layers:
+                packed_sequence = decoder_layer(
+                    packed_sequence=packed_sequence,
+                    sample_lens=sample_lens,
+                    attention_mask=attention_mask,
+                    packed_position_embeddings=packed_position_embeddings,
+                    **extra_inputs,
+                )
 
         if self.use_moe:
             packed_sequence_ = torch.zeros_like(packed_sequence)

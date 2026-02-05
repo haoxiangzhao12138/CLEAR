@@ -919,6 +919,12 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel, GenerationMixin):
         # Initialize weights and apply final processing
         self.post_init()
 
+    """
+    获取模型的输入嵌入层
+
+    Returns:
+        torch.nn.Module: 返回模型使用的词嵌入层
+    """
     def get_input_embeddings(self):
         return self.model.embed_tokens
 

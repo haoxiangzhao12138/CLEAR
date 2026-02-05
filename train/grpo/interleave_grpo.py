@@ -23,7 +23,7 @@ from modeling.bagel import (
 )
 from data.data_utils import add_special_tokens
 from modeling.qwen2 import Qwen2Tokenizer
-from data.transforms import ImageTransform, DepthImageTransform
+from data.transforms import ImageTransform
 from data.output_transfer import OutputTransfer, DataConfig
 from safetensors.torch import load_file
 from accelerate import init_empty_weights
@@ -32,6 +32,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from copy import deepcopy
 from collections import defaultdict
+
+# import debugpy
+# try:
+#     # 5678 is the default attach port in the VS Code debug configurations. Unless a host and port are specified, host defaults to 127.0.0.1
+#     debugpy.listen(("localhost", 9501))
+#     print("Waiting for debugger attach")
+#     debugpy.wait_for_client()
+# except Exception as e:
+#     pass
+
+# import torch
+# def custom_repr(self):
+#     return f'{{Tensor:{tuple(self.shape)}}} {original_repr(self)}'
+
+# original_repr = torch.Tensor.__repr__
+# torch.Tensor.__repr__ = custom_repr
+
 
 
 @dataclass
@@ -45,7 +62,7 @@ class GRPOScriptArguments(ScriptArguments):
     """
 
     reward_funcs: list[str] = field(
-        default_factory=lambda: ["accuracy", "format", "exploration_guided"],
+        default_factory=lambda: ["accuracy", "format"],
         metadata={
             "help": "List of reward functions. Possible values: 'accuracy', 'format'"
         },
@@ -165,7 +182,7 @@ class GRPOTrainingArguments(GRPOConfig):
         metadata={"help": "Keep language-model weights fixed (no gradient updates)."},
     )
     freeze_vit: bool = field(
-        default=False, metadata={"help": "Keep ViT weights fixed during training."}
+        default=True, metadata={"help": "Keep ViT weights fixed during training."}
     )
     freeze_vae: bool = field(
         default=True,
@@ -204,39 +221,51 @@ class GRPOTrainingArguments(GRPOConfig):
 
 
 def format_reward(completions, **kwargs):
-    """Reward function that checks if the completion has a specific format."""
+    """
+    检查格式：
+    1. 必须有 <think>...</think>
+    2. 必须以 <answer>...</answer> 结尾
+    3. 中间可以包含 <image_restore> (单token)
+    """
+    # 结尾必须是 answer
     result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    # reason_pattern = r"<think>.*?</think>"
+    
+    # [修改]: 只要包含 <image_restore> 这个字符串即可，不需要闭合标签
+    restore_token = "<image_restore>" 
+
     reward_list = []
     for i in range(len(completions)):
         match_flag = True
-        completions[i] = completions[i][3:]
-        for j in range(len(completions[i])):
-            if type(completions[i][j]) == str and j != len(completions[i]) - 1:
-                # reason_match = re.fullmatch(
-                #     reason_pattern, completions[i][j].strip(), re.DOTALL
-                # )
-                if completions[i][j] == REFLECTION_PROMPT:
-                    continue
-                seg_match = re.fullmatch(
-                    seg_pattern, completions[i][j].strip(), re.DOTALL
-                )
-                depth_match = re.fullmatch(
-                    depth_pattern, completions[i][j].strip(), re.DOTALL
-                )
-                if seg_match or depth_match:
-                    match = True
+        # completions[i] 是一个混合列表 [Text, Image, Text...]
+        # 假设前3个元素是 prompt 部分，这里切片取生成的回复
+        current_completion = completions[i][3:] 
+        
+        for j in range(len(current_completion)):
+            item = current_completion[j]
+            # 如果是文本段
+            if isinstance(item, str):
+                s = item.strip()
+                
+                # 如果是最后一段，必须匹配 answer 结构
+                if j == len(current_completion) - 1:
+                    match = re.fullmatch(result_pattern, s, re.DOTALL)
                 else:
-                    match = False
-            elif type(completions[i][j]) == str and j == len(completions[i]) - 1:
-                match = re.fullmatch(
-                    result_pattern, completions[i][j].strip(), re.DOTALL
-                )
-            else:
-                continue
-            if not match:
-                match_flag = False
-                break
+                    # 中间段落：要么是 answer (如果它提前结束了)，要么包含 restore token
+                    # 这里放宽逻辑：只要不是最后一段，我们允许它是思维链的一部分或者包含 restore token
+                    # 关键是看是否包含我们不想要的乱码。
+                    # 简单起见，如果包含 <image_restore> 就算符合工具调用格式
+                    if restore_token in s:
+                        match = True
+                    # 或者它是纯思维链的一部分 (通过 think 正则判断，或者由后续 answer 保证)
+                    # 这里我们主要确保它不破坏整体结构。
+                    # 为简单起见，如果不是最后一段，我们通常默认它是合法的（除非有严格的中间格式要求）
+                    else:
+                        match = True 
+                
+                if not match:
+                    match_flag = False
+                    break
+        
         reward_list.append(1.0 if match_flag else 0.0)
     return reward_list
 
@@ -259,8 +288,8 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
         list[bool]: 每个 prompt 的处理结果（True/False）
     """
     # set your judeger url and api key
-    base_url = ""
-    api_key = "-"
+    base_url = "http://yy.dbh.baidu-int.com"
+    api_key = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.
     Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here’s how you can accomplish the task:
@@ -324,11 +353,11 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
         return False
 
     # 并行处理所有请求
-    max_retries = 5
+    max_retries = 3
     timeout = 30
-    max_workers = 32
+    max_workers = 64
     # model = "qwen3-30b-a3b-instruct-2507"
-    model = "qwen2.5-vl-72b"
+    model = "gpt-4.1"
     prompts = []
     continue_list = []
     answer_list = []
@@ -368,70 +397,10 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
     return results_float
 
 
-def exploration_guided_reward(completions, flag, data_id, **kwargs):
-    """
-    规则（按 data_id 分组）：
-    - 先计算每个样本是否命中指定格式（match_flag）。
-    - 对于同一 data_id 的样本，统计该组 match_flag=True 的数量 count。
-      * 若 count < thrshold：对该组内所有 (flag[i]=='positive' 且 match_flag[i]) 的样本给 +0.2
-      * 若 count > thrshold：对该组内所有 (flag[i]=='negative' 且 match_flag[i]) 的样本给 -0.2
-      * 其他情况给 0.0
-    """
-    seg_re = re.compile(
-        r"<think>.*?</think>\s*<segmentation>.*?</segmentation>", re.DOTALL
-    )
-    depth_re = re.compile(
-        r"<think>.*?</think>\s*<depth-estimation>.*?</depth-estimation>", re.DOTALL
-    )
-
-    n = len(completions)
-    reward_list = [0.0] * n
-    thrshold = 3  # 沿用你原来的命名
-
-    # 1) 先逐样本计算 match_flag（不修改原始 completions 结构）
-    match_flags = [False] * n
-    for i in range(n):
-        pieces = completions[i][3:]  # 跳过前三段
-        for j in range(len(pieces)):
-            if isinstance(pieces[j], str) and j != len(pieces) - 1:
-                s = pieces[j].strip()
-                if s == REFLECTION_PROMPT:
-                    continue
-                if seg_re.fullmatch(s) or depth_re.fullmatch(s):
-                    match_flags[i] = True
-                    break
-
-    # 2) 按 data_id 分组并统计每组的 match 数量
-    id_to_indices = defaultdict(list)
-    for i, did in enumerate(data_id):
-        id_to_indices[did].append(i)
-
-    id_to_match_count = {}
-    for did, idxs in id_to_indices.items():
-        id_to_match_count[did] = sum(1 for idx in idxs if match_flags[idx])
-
-    # 3) 依据每组的统计数与各自样本的 flag 给奖励
-    for did, idxs in id_to_indices.items():
-        count = id_to_match_count[did]
-        if count < thrshold:
-            # 组内：仅对 positive 且 match=True 的样本给正奖励
-            for idx in idxs:
-                if flag[idx] == "positive" and match_flags[idx]:
-                    reward_list[idx] = 0.2
-        elif count > thrshold:
-            # 组内：仅对 negative 且 match=True 的样本给负奖励
-            for idx in idxs:
-                if flag[idx] == "negative" and match_flags[idx]:
-                    reward_list[idx] = -0.2
-        # count == thrshold 时，全为 0.0（保持默认）
-
-    return reward_list
-
 
 reward_funcs_registry = {
     "accuracy": accuracy_reward_with_llm,
     "format": format_reward,
-    "exploration_guided": exploration_guided_reward,
 }
 
 
@@ -519,7 +488,7 @@ def main(grpo_args, training_args, model_args):
     print(f"model load msg: {msg}")
     del model_state_dict
 
-    vae_transform = DepthImageTransform(1024, 512, 16)
+    vae_transform = ImageTransform(1024, 512, 16)
     vit_transform = ImageTransform(518, 224, 14)
     vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
     data_config = DataConfig(

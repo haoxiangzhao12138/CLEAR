@@ -1,5 +1,6 @@
 export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model during RL
 export LOG_PATH="./debug_log_2b.txt"
+export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=interleaved-reasoning
@@ -18,8 +19,8 @@ torchrun \
     --bf16 true \
     --output_dir results/${WANDB_RUN_NAME} \
     --save_dir ./case_out/${WANDB_RUN_NAME} \
-    --jsonl_path ./datasets/COOPER_reasoning_train_set/RL_data.jsonl \
-    --image_root ./datasets/COOPER_reasoning_train_set/images/ \
+    --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
+    --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --learning_rate 3e-6 \
@@ -27,21 +28,21 @@ torchrun \
     --num_iterations 1 \
     --num_generations 8 \
     --beta 0.0 \
-    --num_timesteps 30 \
+    --num_timesteps 50 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 128 \
+    --gradient_accumulation_steps 16 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
-    --num_train_epochs 1 \
+    --max_steps 100 \
     --run_name $WANDB_RUN_NAME \
     --save_steps 10 \
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path ./results/reason_interleave_sft_20251012_231540/0000300 \
+    --model_param_path /root/CLEAR/results/20260126_102011_mix/0003000 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \
