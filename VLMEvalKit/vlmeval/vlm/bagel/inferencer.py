@@ -605,7 +605,7 @@ class InterleaveInferencer:
                 restore_match = re.search(restore_pattern, gen_text)
 
                 if restore_match:
-                    print("restore!")
+                    # print("restore!")
                     # 准备生图的 CFG 上下文
                     edit_cfg_prompt = gen_text.replace("<image_restore>", "")
                     cfg_text_context = deepcopy(gen_context)
