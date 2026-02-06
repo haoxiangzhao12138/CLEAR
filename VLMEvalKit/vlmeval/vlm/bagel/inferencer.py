@@ -15,7 +15,8 @@ import sys
 from pathlib import Path
 
 # 将上级目录添加到 sys.path
-sys.path.append(str(Path(__file__).parent.parent))
+root_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+sys.path.append(str(root_dir))
 from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE_REASON_SYSTEM_PROMPT, RESTORE_TOKEN
 
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
