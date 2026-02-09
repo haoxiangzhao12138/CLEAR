@@ -6,7 +6,9 @@
             "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260206_211235/checkpoint-40",
             "reasoning_mode": "interleave",
             "is_thinking": false,
-            "is_ema": false
+            "is_ema": false,
+            "output_need_vae": false,
+            "output_need_vit": true
         }
     },
     "data": {

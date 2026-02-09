@@ -31,6 +31,7 @@ class DataConfig:
         max_latent_size=32,
         vit_patch_size=14,
         max_num_patch_per_side=70,
+        output_need_vit=True,
     ):
         self.grouped_datasets = grouped_datasets
         self.text_cond_dropout_prob = text_cond_dropout_prob
@@ -40,6 +41,7 @@ class DataConfig:
         self.vae_cond_dropout_prob = vae_cond_dropout_prob
         self.vae_image_downsample = vae_image_downsample
         self.max_latent_size = max_latent_size
+        self.output_need_vit = output_need_vit
 
 
 class PackedDataset(torch.utils.data.IterableDataset):
@@ -147,6 +149,9 @@ class PackedDataset(torch.utils.data.IterableDataset):
                     dataset_args["clean_image_dir"] = meta_info["clean_image_dir"]
                 if "corrupted_image_dir" in meta_info:
                     dataset_args["corrupted_image_dir"] = meta_info["corrupted_image_dir"]
+
+            # 传递 output_need_vit 参数
+            dataset_args["output_need_vit"] = self.data_config.output_need_vit
 
             resume_data_status = dataset_args.pop("resume_data_status", True)
             if (

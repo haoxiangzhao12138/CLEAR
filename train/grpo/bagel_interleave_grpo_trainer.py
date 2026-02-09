@@ -478,6 +478,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         max_think_token_n=self.args.max_think_token_n,
                         top_p=self.args.top_p,
                         image_shapes=example[0].size[::-1],
+                        output_need_vae=self.args.output_need_vae,
+                        output_need_vit=self.args.output_need_vit,
                     )  # 返回 List[Union[str, Image]]
                     output_list.append(output)
                     match = re.fullmatch(result_pattern, output[-1], re.DOTALL)

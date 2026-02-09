@@ -130,6 +130,8 @@ class BagelInference(BaseModel):
         cfg_renorm_min=0.0,
         cfg_renorm_type="text_channel",
         repetition_penalty: float = 1.0,
+        output_need_vae: bool = False,  # 控制生成图片后是否将 VAE token 插入上下文
+        output_need_vit: bool = True,   # 控制生成图片后是否将 ViT token 插入上下文
         verbose=False,
         save_file=None,  # if None, then no save the reasoning process
     ):
@@ -219,6 +221,8 @@ class BagelInference(BaseModel):
             cfg_renorm_type=cfg_renorm_type,
             repetition_penalty=repetition_penalty,
             is_thinking=is_thinking,
+            output_need_vae=output_need_vae,
+            output_need_vit=output_need_vit,
         )
         torch.cuda.empty_cache()
 

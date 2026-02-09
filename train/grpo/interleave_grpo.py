@@ -218,6 +218,18 @@ class GRPOTrainingArguments(GRPOConfig):
             "help": "Hard limit on tokens in a packed batch; flush if adding a sample would exceed it."
         },
     )
+    output_need_vae: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to insert VAE tokens into context after image generation."
+        },
+    )
+    output_need_vit: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to insert ViT tokens into context after image generation."
+        },
+    )
 
 
 def format_reward(completions, **kwargs):

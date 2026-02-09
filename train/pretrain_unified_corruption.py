@@ -146,6 +146,12 @@ class DataArguments:
             "help": "YAML file specifying dataset groups, weights, and preprocessing rules."
         },
     )
+    output_need_vit: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether the output image needs ViT encoding. Set to False to prevent leaking clean image features."
+        },
+    )
     prefetch_factor: int = field(
         default=2,
         metadata={
@@ -719,6 +725,7 @@ def main():
     with open(data_args.dataset_config_file, "r") as stream:
         dataset_meta = yaml.safe_load(stream)
     dataset_config = DataConfig(grouped_datasets=dataset_meta)
+    dataset_config.output_need_vit = data_args.output_need_vit
     if training_args.visual_und:
         dataset_config.vit_patch_size = model_args.vit_patch_size
         dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side

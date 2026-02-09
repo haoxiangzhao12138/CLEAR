@@ -71,6 +71,7 @@ class InterleaveReasonIterableDataset(
         num_used_data,      # 来自 YAML
         clean_image_dir,    # 【自定义参数】清晰图片目录
         corrupted_image_dir,# 【自定义参数】损毁图片目录
+        output_need_vit=True,  # 【新增】控制输出图片是否需要 ViT
         local_rank=0,
         world_size=1,
         num_workers=1,
@@ -80,6 +81,7 @@ class InterleaveReasonIterableDataset(
         # 1. 保存自定义路径
         self.clean_image_dir = clean_image_dir
         self.corrupted_image_dir = corrupted_image_dir
+        self.output_need_vit = output_need_vit
 
         # 2. 初始化父类 JSONLStandardIterableDataset
         # 这个父类负责：分布式切分(Sharding)、断点续训(data_status)、多线程读取(Worker)
@@ -167,7 +169,7 @@ class InterleaveReasonIterableDataset(
                         clean_img,
                         need_loss=True,  # 计算 MSE
                         need_vae=True,   # 走 VAE
-                        need_vit=True,  # 不作为 ViT 输入 (防止 Leak)
+                        need_vit=self.output_need_vit,  # 由参数控制是否作为 ViT 输入
                     )
                     
                     # 3. 后续文本 (如果有)

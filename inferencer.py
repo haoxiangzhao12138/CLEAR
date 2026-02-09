@@ -11,7 +11,7 @@ from modeling.bagel.qwen2_navit import NaiveCache
 import re
 import numpy as np
 import matplotlib
-from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE_REASON_SYSTEM_PROMPT
+from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE_REASON_SYSTEM_PROMPT, RESTORE_TOKEN
 
 
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
@@ -477,6 +477,8 @@ class InterleaveInferencer:
         cfg_renorm_type="global",
         image_shapes=(1024, 1024),
         top_p=1.0,
+        output_need_vae=False,  # 控制生成图片后是否将 VAE token 插入上下文
+        output_need_vit=True,   # 控制生成图片后是否将 ViT token 插入上下文
         **kwargs,
     ) -> List[Union[str, Image.Image]]:
         # cooperative reasoning and perception generation function
@@ -574,16 +576,19 @@ class InterleaveInferencer:
 
                     # 4. 反馈结果
                     output_list.append(pil_img2rgb(img))
-                    
-                    # 将生成的图片转换并喂回模型 KV Cache，作为下一轮推理的依据
-                    img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
-                    gen_context = self.update_context_image(img_processed, gen_context, vae=False)
-                    
-                    # 同步更新 CFG 用的上下文
-                    cfg_text_context = deepcopy(gen_context)
-                    edit_cfg_img_context = self.update_context_image(
-                        img_processed, edit_cfg_img_context, vae=False
-                    )
+
+                    # 根据开关决定是否将生成的图片喂回模型 KV Cache
+                    if output_need_vae or output_need_vit:
+                        img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
+                        gen_context = self.update_context_image(
+                            img_processed, gen_context, vae=output_need_vae, vit=output_need_vit
+                        )
+
+                        # 同步更新 CFG 用的上下文
+                        cfg_text_context = deepcopy(gen_context)
+                        edit_cfg_img_context = self.update_context_image(
+                            img_processed, edit_cfg_img_context, vae=output_need_vae, vit=output_need_vit
+                        )
                 else:
                     break
 

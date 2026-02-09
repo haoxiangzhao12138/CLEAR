@@ -23,6 +23,8 @@ torchrun \
     --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
+    --output_need_vae True \
+    --output_need_vit True \
     --learning_rate 3e-6 \
     --lr_scheduler_type cosine \
     --num_iterations 1 \
