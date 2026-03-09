@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=interleaved-reasoning
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_small_data
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_no_vit
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -24,7 +24,7 @@ torchrun \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
-    --output_need_vit True \
+    --output_need_vit False \
     --learning_rate 3e-6 \
     --lr_scheduler_type cosine \
     --num_iterations 1 \
@@ -39,12 +39,12 @@ torchrun \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
-    --max_steps 40 \
+    --max_steps 100 \
     --run_name $WANDB_RUN_NAME \
     --save_steps 5 \
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path /root/CLEAR/results/20260208_203829_mix_small_data/0000600 \
+    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0002000 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \

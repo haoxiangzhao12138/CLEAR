@@ -38,7 +38,7 @@ from modeling.bagel import (
 )
 from data.data_utils import add_special_tokens
 from modeling.qwen2 import Qwen2Tokenizer
-from data.transforms import ImageTransform, DepthImageTransform
+from data.transforms import ImageTransform
 from data.output_transfer import OutputTransfer, DataConfig
 from safetensors.torch import load_file
 from accelerate import init_empty_weights
@@ -46,8 +46,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from copy import deepcopy
-
-REFLECTION_PROMPT = "\nHere is the result of the depth-estimation/segmentation. Please note that the result of the depth-estimation/segmentation is not always accurate. Please check it carefully. \nNow please continue to think in <think>...</think> and then decide whether to continue to generate the depth-estimation/segmentation in <depth-estimation>...</depth-estimation>/<segmentation>...</segmentation> or give the answer in <answer>...</answer>.\n"
 
 
 @dataclass
@@ -290,33 +288,13 @@ def accuracy_reward(completions, solution, **kwargs):
 
 def format_reward(completions, **kwargs):
     """Reward function that checks if the completion has a specific format."""
-    # result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    result_pattern = r"<think>.*?</think>.*"
-    seg_pattern = r"<think>.*?</think>\s*<segmentation>.*?</segmentation>"
-    depth_pattern = r"<think>.*?</think>\s*<depth-estimation>.*?</depth-estimation>"
-    # reason_pattern = r"<think>.*?</think>"
+    result_pattern = r".*?</think>\s*<answer>.*?</answer>"
     reward_list = []
     for i in range(len(completions)):
         match_flag = True
         completions[i] = completions[i][3:]
         for j in range(len(completions[i])):
-            if type(completions[i][j]) == str and j != len(completions[i]) - 1:
-                # reason_match = re.fullmatch(
-                #     reason_pattern, completions[i][j].strip(), re.DOTALL
-                # )
-                if completions[i][j] == REFLECTION_PROMPT:
-                    continue
-                seg_match = re.fullmatch(
-                    seg_pattern, completions[i][j].strip(), re.DOTALL
-                )
-                depth_match = re.fullmatch(
-                    depth_pattern, completions[i][j].strip(), re.DOTALL
-                )
-                if seg_match or depth_match:
-                    match = True
-                else:
-                    match = False
-            elif type(completions[i][j]) == str and j == len(completions[i]) - 1:
+            if type(completions[i][j]) == str and j == len(completions[i]) - 1:
                 match = re.fullmatch(
                     result_pattern, completions[i][j].strip(), re.DOTALL
                 )
@@ -545,7 +523,7 @@ def main(grpo_args, training_args, model_args):
     print(f"model load msg: {msg}")
     del model_state_dict
 
-    vae_transform = DepthImageTransform(1024, 512, 16)
+    vae_transform = ImageTransform(1024, 512, 16)
     vit_transform = ImageTransform(518, 224, 14)
     vae_image_downsample = model_args.latent_patch_size * vae_config.downsample
     data_config = DataConfig(

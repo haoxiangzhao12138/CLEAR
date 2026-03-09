@@ -3,15 +3,20 @@
         "BAGEL": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260206_211235/checkpoint-40",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260211_201735_no_vit/checkpoint-90",
             "reasoning_mode": "interleave",
             "is_thinking": false,
             "is_ema": false,
-            "output_need_vae": false,
-            "output_need_vit": true
+            "output_need_vae": true,
+            "output_need_vit": false,
+            "consider_think": true
         }
     },
     "data": {
+        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+        },
         "MMVet_LOW_LEVEL_HIGH": {
             "class": "MMVet",
             "dataset": "MMVet_LOW_LEVEL_HIGH"

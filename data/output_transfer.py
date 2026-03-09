@@ -10,7 +10,6 @@ from .data_utils import (
     prepare_attention_mask_per_sample,
 )
 
-REFLECTION_PROMPT = "\nHere is the result of the depth-estimation/segmentation. Please note that the result of the depth-estimation/segmentation is not always accurate. Please check it carefully. \nNow please continue to think in <think>...</think> and then decide whether to continue to generate the depth-estimation/segmentation in <depth-estimation>...</depth-estimation>/<segmentation>...</segmentation> or give the answer in <answer>...</answer>.\n"
 
 
 class DataConfig:
@@ -70,10 +69,7 @@ class OutputTransfer:
             for j in range(0, len(output)):
                 if type(output[j]) is str:
                     # before = data["num_tokens"]
-                    if output[j] == REFLECTION_PROMPT:
-                        data = self._add_text(data, output[j], need_loss=False)
-                    else:
-                        data = self._add_text(data, output[j], need_loss=True)
+                    data = self._add_text(data, output[j], need_loss=True)
                     # completions_tokens_text += data["num_tokens"] - before
                 else:
                     pre_num_tokens = data["num_tokens"]

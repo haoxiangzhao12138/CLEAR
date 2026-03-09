@@ -479,6 +479,7 @@ class InterleaveInferencer:
         top_p=1.0,
         output_need_vae=False,  # 控制生成图片后是否将 VAE token 插入上下文
         output_need_vit=True,   # 控制生成图片后是否将 ViT token 插入上下文
+        consider_think=True,
         **kwargs,
     ) -> List[Union[str, Image.Image]]:
         # cooperative reasoning and perception generation function
@@ -548,11 +549,13 @@ class InterleaveInferencer:
 
                 if restore_match:
                     # 准备生图的 CFG 上下文
-                    edit_cfg_prompt = gen_text.replace("<image_restore>", "")
                     cfg_text_context = deepcopy(gen_context)
-                    cfg_text_context = self.update_context_text(
-                        edit_cfg_prompt, cfg_text_context
-                    )
+
+                    if not consider_think:
+                        edit_cfg_prompt = gen_text.replace("<image_restore>", "")
+                        cfg_text_context = self.update_context_text(
+                            edit_cfg_prompt, cfg_text_context
+                        )
                     
                     gen_context = self.update_context_text(gen_text, gen_context)
                     edit_cfg_img_context = self.update_context_text(
