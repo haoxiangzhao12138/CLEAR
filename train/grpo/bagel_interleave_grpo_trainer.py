@@ -463,25 +463,34 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 
                 # [修改点 2] 初始化 image_restore 的计数列表
                 image_restore_num_list = []
-                
+                all_trajectories = []  # [新增] 用于存储图像生成轨迹
+
                 # [修改点 3] 定义目标 Token 和 Answer 正则
                 restore_token = "<image_restore>"
                 result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
 
                 for example in input_list:
-                    output = inferencer.interleave_reason_tool_condition(
+                    output, trajectories = inferencer.interleave_reason_tool_condition(
                         example[:2],
                         do_sample=True,
                         text_temperature=self.args.temperature,
                         timestep_shift=self.args.timestep_shift,
-                        num_timesteps=self.args.num_timesteps,
+                        num_timesteps=(
+                            self.args.num_timesteps_train
+                            if self.args.use_flow_grpo
+                            else self.args.num_timesteps
+                        ),
                         max_think_token_n=self.args.max_think_token_n,
                         top_p=self.args.top_p,
                         image_shapes=example[0].size[::-1],
                         output_need_vae=self.args.output_need_vae,
                         output_need_vit=self.args.output_need_vit,
-                    )  # 返回 List[Union[str, Image]]
+                        sde_sigma=self.args.sde_sigma if self.args.use_flow_grpo else 0.0,
+                        record_trajectory=self.args.use_flow_grpo,
+                    )  # 返回 Tuple[List[Union[str, Image]], List[Dict]]
                     output_list.append(output)
+                    if self.args.use_flow_grpo:
+                        all_trajectories.append(trajectories)
                     match = re.fullmatch(result_pattern, output[-1], re.DOTALL)
                     if match:
                         is_eos.append(True)
@@ -542,6 +551,12 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                     ref_per_token_logps = self._get_per_token_logps(
                         self.ref_model, input_dict_list
                     )
+
+        # --- 图像 Flow-GRPO log probs (路线 A) ---
+        # 路线 A 下 num_iterations=1 时，old = new.detach()，在 _compute_loss 中处理
+        # 这里只需要传递 trajectory，不需要预计算 log probs
+        old_image_log_probs = None
+        ref_image_log_probs = None
 
         start_time = time.time()
         # --- 计算奖励 (Compute Rewards) ---
@@ -701,6 +716,10 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             "is_eos": is_eos,  # 是否以 EOS 结束
             "old_per_token_logps": old_per_token_logps,  # 旧的 log probabilities
             "ref_per_token_logps": ref_per_token_logps,  # 参考模型的 log probabilities
+            # [新增] Flow-GRPO 相关
+            "image_trajectories": all_trajectories if self.args.use_flow_grpo else None,
+            "old_image_log_probs": old_image_log_probs,
+            "ref_image_log_probs": ref_image_log_probs,
         }
 
     # Get the per-token log probabilities for the completions for the model and the reference model
@@ -728,6 +747,90 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 average_entropy_from_logits_list(logits_list),
             )
         return selective_log_softmax(logits_list, ce_loss_text_ids_list)
+
+    def _compute_image_log_probs(self, model, trajectories_list, input_dict_list):
+        """
+        路线 A：用采样时记录的 v_pred 近似计算 SDE log probability。
+        不需要重新 forward，不需要 past_key_values。
+        当 num_iterations=1 时，old 和 new 都用同一个 v_pred，ratio=1，
+        优化信号完全来自 advantage（由 image_similarity_reward 提供）。
+        """
+        all_log_probs = []
+        device = self.accelerator.device
+
+        if not trajectories_list or not trajectories_list[0]:
+            return all_log_probs
+
+        for sample_idx, trajectories in enumerate(trajectories_list):
+            sample_log_probs = []
+
+            if not trajectories:
+                all_log_probs.append(sample_log_probs)
+                continue
+
+            for traj in trajectories:
+                if not traj:
+                    continue
+
+                steps = [s for s in traj if '_context' not in s]
+                if not steps:
+                    continue
+
+                step_log_probs = []
+                for step in steps:
+                    x_t = step['x_t'].to(device)
+                    t = step['timestep']
+                    x_next = step['x_next'].to(device)
+                    v_pred = step['v_pred'].to(device)
+
+                    # SDE 转移分布的 log prob
+                    t_val = t if isinstance(t, float) else t.item() if isinstance(t, torch.Tensor) else float(t)
+                    score = (x_t + (1 - t_val) * v_pred) / max(t_val, 1e-6)
+                    drift = v_pred + (self.args.sde_sigma ** 2 / 2) * score
+                    dt = 1.0 / self.args.num_timesteps_train
+                    mu = x_t + drift * dt
+                    variance = self.args.sde_sigma ** 2 * dt
+
+                    log_p = -0.5 * ((x_next - mu) ** 2 / variance).sum()
+                    step_log_probs.append(log_p)
+
+                if step_log_probs:
+                    sample_log_probs.append(torch.stack(step_log_probs))
+
+            all_log_probs.append(sample_log_probs)
+
+        return all_log_probs
+
+    def _compute_image_grpo_loss(
+        self,
+        new_log_probs,      # 当前模型的 per-step log π
+        old_log_probs,      # 旧模型的 per-step log π
+        ref_log_probs,      # 参考模型的 per-step log π（可选）
+        advantage,          # 标量，和文本共享同一个 advantage
+    ):
+        """
+        计算图像 GRPO loss。
+
+        与文本 GRPO 类似，但"token"变成"去噪步"。
+        """
+        # 重要性比率
+        ratio = torch.exp(new_log_probs - old_log_probs)
+
+        # PPO-style 裁剪
+        clipped_ratio = torch.clamp(ratio, 1 - self.epsilon_low, 1 + self.epsilon_high)
+
+        # GRPO loss
+        loss1 = ratio * advantage
+        loss2 = clipped_ratio * advantage
+        policy_loss = -torch.min(loss1, loss2)
+
+        # KL 约束
+        if self.beta > 0 and ref_log_probs is not None:
+            kl = (torch.exp(ref_log_probs - new_log_probs)
+                  - (ref_log_probs - new_log_probs) - 1)
+            policy_loss = policy_loss + self.beta * kl
+
+        return policy_loss.mean()
 
     def _compute_loss(self, model, inputs):
         # Compute the per-token log probabilities for the model
@@ -806,6 +909,56 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
+        # 保存文本 loss 引用，避免被后续变量覆盖
+        text_loss = loss
+
+        # === 新增的图像 Flow-GRPO loss ===
+        image_loss = torch.tensor(0.0, device=device)
+
+        if self.args.use_flow_grpo and inputs.get("image_trajectories") is not None:
+            trajectories_list = inputs["image_trajectories"]
+            old_image_log_probs = inputs["old_image_log_probs"]
+            ref_image_log_probs = inputs.get("ref_image_log_probs")
+
+            # 路线 A：v_pred 来自采样时的记录（已 detach），不需要 no_grad
+            new_image_log_probs = self._compute_image_log_probs(
+                model, trajectories_list, inputs["input_dict_list"]
+            )
+
+            # 当 num_iterations == 1 时，用当前模型的 detach 版本作为 old
+            # 路线 A 下不重新计算 v_pred，old 和 new 本质相同
+            if old_image_log_probs is None:
+                old_image_log_probs = [
+                    [new.detach() for new in new_sample]
+                    for new_sample in new_image_log_probs
+                ]
+
+            # 计算每个样本的图像 loss
+            advantages = inputs["advantages"]
+
+            total_image_loss = 0.0
+            num_steps = 0
+
+            for sample_idx, (new_probs, old_probs, adv) in enumerate(
+                zip(new_image_log_probs, old_image_log_probs, advantages)
+            ):
+                ref_probs = ref_image_log_probs[sample_idx] if ref_image_log_probs else None
+
+                for img_idx, (new_img_probs, old_img_probs) in enumerate(zip(new_probs, old_probs)):
+                    ref_img_probs = ref_probs[img_idx] if ref_probs else None
+
+                    img_loss = self._compute_image_grpo_loss(
+                        new_img_probs, old_img_probs, ref_img_probs, adv
+                    )
+                    total_image_loss += img_loss
+                    num_steps += 1
+
+            if num_steps > 0:
+                image_loss = total_image_loss / num_steps
+
+        # === 合并 ===
+        total_loss = text_loss + self.args.image_loss_weight * image_loss
+
         # Log the metrics
         mode = "eval" if self.control.should_evaluate else "train"
 
@@ -850,7 +1003,12 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         self._metrics[mode]["clip_ratio/region_mean"].append(
             gathered_clip_ratio.nanmean().item()
         )
-        return loss
+
+        # Log image GRPO loss
+        if self.args.use_flow_grpo:
+            self._metrics[mode].setdefault("image_grpo_loss", []).append(image_loss.item())
+
+        return total_loss
 
     @profiling_decorator
     def _prepare_inputs(

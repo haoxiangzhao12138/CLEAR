@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=interleaved-reasoning
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_no_vit
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_no_vit_flow_grpo
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -21,6 +21,9 @@ torchrun \
     --save_dir ./case_out/${WANDB_RUN_NAME} \
     --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
     --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
+    --clean_image_root /root/CLEAR/datasets/processed_dataset/rl/images/ \
+    --image_similarity_method vit \
+    --reward_funcs accuracy format image_similarity \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
@@ -34,7 +37,7 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 128 \
+    --gradient_accumulation_steps 1 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
@@ -48,4 +51,8 @@ torchrun \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \
-    --max_num_tokens 16384
+    --max_num_tokens 16384 \
+    --use_flow_grpo True \
+    --sde_sigma 1.0 \
+    --num_timesteps_train 10 \
+    --image_loss_weight 0.1

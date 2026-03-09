@@ -32,6 +32,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from copy import deepcopy
 from collections import defaultdict
+import math
+import torch
+from PIL import Image
+from data.data_utils import patchify
 
 # import debugpy
 # try:
@@ -62,9 +66,9 @@ class GRPOScriptArguments(ScriptArguments):
     """
 
     reward_funcs: list[str] = field(
-        default_factory=lambda: ["accuracy", "format"],
+        default_factory=lambda: ["accuracy", "format", "image_similarity"],
         metadata={
-            "help": "List of reward functions. Possible values: 'accuracy', 'format'"
+            "help": "List of reward functions. Possible values: 'accuracy', 'format', 'image_similarity'"
         },
     )
     jsonl_path: str = field(
@@ -155,6 +159,18 @@ class ModelArguments:
             "help": "Probability of dropping ViT visual features during training."
         },
     )
+    clean_image_root: str = field(
+        default="",
+        metadata={"help": "Root directory containing the clean/reference images."},
+    )
+    image_similarity_method: str = field(
+        default="vit",
+        metadata={"help": "Method to compute image similarity: 'vit' or 'vae'."},
+    )
+    image_similarity_weight: float = field(
+        default=0.1,
+        metadata={"help": "Weight for image similarity reward."},
+    )
 
 
 @dataclass
@@ -169,7 +185,7 @@ class GRPOTrainingArguments(GRPOConfig):
     num_timesteps: int = field(
         default=30,
         metadata={
-            "help": "Shift applied to diffusion timestep indices (for latent prediction)."
+            "help": "Number of timesteps for image generation during inference."
         },
     )
     save_dir: str = field(
@@ -230,6 +246,135 @@ class GRPOTrainingArguments(GRPOConfig):
             "help": "Whether to insert ViT tokens into context after image generation."
         },
     )
+    # --- Flow-GRPO parameters ---
+    use_flow_grpo: bool = field(
+        default=True,
+        metadata={"help": "Enable Flow-GRPO for image generation optimization."},
+    )
+    sde_sigma: float = field(
+        default=1.0,
+        metadata={"help": "Sigma for SDE-based sampling during training."},
+    )
+    num_timesteps_train: int = field(
+        default=10,
+        metadata={
+            "help": "Number of timesteps for image generation during training (Denoising Reduction)."
+        },
+    )
+    image_loss_weight: float = field(
+        default=0.1,
+        metadata={
+            "help": "Weight for image GRPO loss in total loss computation."
+        },
+    )
+
+
+# ============ 图像相似度 Reward ============
+_image_reward_components = {}
+
+
+def _extract_vit_features(image, vit_model, vit_transform, patch_size,
+                           get_position_ids_fn, max_patches, device):
+    """从单张 PIL Image 提取 ViT pooled feature。"""
+    image_tensor = vit_transform(image).to(device)
+    position_ids = get_position_ids_fn(
+        image_tensor.size(1), image_tensor.size(2),
+        patch_size, max_num_patches_per_side=max_patches,
+    ).to(device)
+    patches = patchify(image_tensor, patch_size).to(device)
+    cu_seqlens = torch.tensor([0, patches.shape[0]], dtype=torch.int32, device=device)
+    features = vit_model(
+        packed_pixel_values=patches,
+        packed_flattened_position_ids=position_ids,
+        cu_seqlens=cu_seqlens,
+        max_seqlen=patches.shape[0],
+    )
+    return features.mean(dim=0, keepdim=True)  # (1, hidden)
+
+
+def _compute_vae_similarity(gen_img, clean_img, vae_model, vae_transform, device):
+    """VAE latent 空间 MSE → [0,1] reward。"""
+    gen_tensor = vae_transform(gen_img).unsqueeze(0).to(device)
+    clean_tensor = vae_transform(clean_img).unsqueeze(0).to(device)
+    gen_latent = vae_model.encode(gen_tensor)
+    clean_latent = vae_model.encode(clean_tensor)
+    mse = torch.nn.functional.mse_loss(gen_latent, clean_latent).item()
+    return math.exp(-mse * 0.1)
+
+
+def image_similarity_reward(completions, image_name, **kwargs):
+    """
+    比较生成图像与 clean 参考图像的相似度。
+    没有生成图像的样本返回 NaN（不参与该 reward 的聚合）。
+    """
+    comp = _image_reward_components
+    if not comp:
+        return [float('nan')] * len(completions)
+
+    clean_root = comp["clean_image_root"]
+    method = comp["method"]
+    device = comp["device"]
+
+    reward_list = []
+    for idx, completion in enumerate(completions):
+        # 1. 提取生成图像（取最后一张）
+        gen_image = None
+        for item in reversed(completion):
+            if isinstance(item, Image.Image):
+                gen_image = item
+                break
+        if gen_image is None:
+            reward_list.append(float('nan'))
+            continue
+
+        # 2. 加载 clean 图像（用原始文件名直接匹配）
+        fname = image_name[idx]
+        clean_path = os.path.join(clean_root, fname)
+        if not os.path.exists(clean_path):
+            # 尝试去掉后缀再匹配
+            base = os.path.splitext(fname)[0]
+            clean_path = None
+            for ext in [".png", ".jpg", ".jpeg"]:
+                candidate = os.path.join(clean_root, base + ext)
+                if os.path.exists(candidate):
+                    clean_path = candidate
+                    break
+        if clean_path is None or not os.path.exists(clean_path):
+            print(f"[image_similarity_reward] clean image not found for {fname}")
+            reward_list.append(float('nan'))
+            continue
+        clean_image = Image.open(clean_path).convert("RGB")
+
+        # 3. 计算相似度
+        try:
+            with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                if method == "vit":
+                    gen_feat = _extract_vit_features(
+                        gen_image, comp["vit_model"], comp["vit_transform"],
+                        comp["vit_patch_size"], comp["get_position_ids_fn"],
+                        comp["vit_max_patches"], device,
+                    )
+                    clean_feat = _extract_vit_features(
+                        clean_image, comp["vit_model"], comp["vit_transform"],
+                        comp["vit_patch_size"], comp["get_position_ids_fn"],
+                        comp["vit_max_patches"], device,
+                    )
+                    sim = torch.nn.functional.cosine_similarity(
+                        gen_feat, clean_feat, dim=-1
+                    ).item()
+                    sim = max(sim, 0.0)
+                else:  # vae
+                    sim = _compute_vae_similarity(
+                        gen_image, clean_image,
+                        comp["vae_model"], comp["vae_transform"], device,
+                    )
+        except Exception as e:
+            print(f"[image_similarity_reward] error for {sample_id}: {e}")
+            sim = 0.0
+
+        reward_list.append(float(sim))
+
+    return reward_list
 
 
 def format_reward(completions, **kwargs):
@@ -413,6 +558,7 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
 reward_funcs_registry = {
     "accuracy": accuracy_reward_with_llm,
     "format": format_reward,
+    "image_similarity": image_similarity_reward,
 }
 
 
@@ -518,6 +664,21 @@ def main(grpo_args, training_args, model_args):
         new_token_ids,
         use_flex=training_args.use_flex,
     )
+
+    # ---- 初始化图像 reward 组件 ----
+    if "image_similarity" in grpo_args.reward_funcs:
+        _image_reward_components.update({
+            "clean_image_root": model_args.clean_image_root,
+            "method": model_args.image_similarity_method,
+            "device": "cuda",
+            "vae_model": vae_model,
+            "vae_transform": vae_transform,
+            "vit_model": model.vit_model,
+            "vit_transform": vit_transform,
+            "vit_patch_size": model_args.vit_patch_size,
+            "vit_max_patches": model_args.vit_max_num_patch_per_side,
+            "get_position_ids_fn": model.get_flattened_position_ids,
+        })
 
     # Get reward functions
     reward_funcs = [reward_funcs_registry[func] for func in grpo_args.reward_funcs]

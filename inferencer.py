@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from copy import deepcopy
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, Tuple
 import io, base64
 from PIL import Image
 import torch
@@ -150,6 +150,8 @@ class InterleaveInferencer:
         cfg_renorm_type="global",
         num_timesteps=50,
         timestep_shift=3.0,
+        sde_sigma=0.0,
+        record_trajectory=False,
     ):
         past_key_values = gen_context["past_key_values"]
         kv_lens = gen_context["kv_lens"]
@@ -162,41 +164,72 @@ class InterleaveInferencer:
         )
         generation_input = dict_to_device(generation_input, self.device)
 
+        # In SDE mode, disable CFG
+        if sde_sigma > 0:
+            cfg_text_scale_ = 1.0
+            cfg_img_scale_ = 1.0
+            use_cfg = False
+        else:
+            cfg_text_scale_ = cfg_text_scale
+            cfg_img_scale_ = cfg_img_scale
+            use_cfg = True
+
         # text cfg
-        cfg_text_past_key_values = cfg_text_precontext["past_key_values"]
-        kv_lens_cfg = cfg_text_precontext["kv_lens"]
-        ropes_cfg = cfg_text_precontext["ropes"]
-        generation_input_cfg_text = self.model.prepare_vae_latent_cfg(
-            curr_kvlens=kv_lens_cfg,
-            curr_rope=ropes_cfg,
-            image_sizes=[image_shape],
-        )
-        generation_input_cfg_text = dict_to_device(
-            generation_input_cfg_text, self.device
-        )
+        if use_cfg and cfg_text_precontext is not None:
+            cfg_text_past_key_values = cfg_text_precontext["past_key_values"]
+            kv_lens_cfg = cfg_text_precontext["kv_lens"]
+            ropes_cfg = cfg_text_precontext["ropes"]
+            generation_input_cfg_text = self.model.prepare_vae_latent_cfg(
+                curr_kvlens=kv_lens_cfg,
+                curr_rope=ropes_cfg,
+                image_sizes=[image_shape],
+            )
+            generation_input_cfg_text = dict_to_device(
+                generation_input_cfg_text, self.device
+            )
+        else:
+            cfg_text_past_key_values = None
+            generation_input_cfg_text = {
+                "cfg_packed_position_ids": None,
+                "cfg_packed_query_indexes": None,
+                "cfg_key_values_lens": None,
+                "cfg_packed_key_value_indexes": None,
+            }
 
         # img cfg
-        cfg_img_past_key_values = cfg_img_precontext["past_key_values"]
-        kv_lens_cfg = cfg_img_precontext["kv_lens"]
-        ropes_cfg = cfg_img_precontext["ropes"]
-        generation_input_cfg_img = self.model.prepare_vae_latent_cfg(
-            curr_kvlens=kv_lens_cfg,
-            curr_rope=ropes_cfg,
-            image_sizes=[image_shape],
-        )
-        generation_input_cfg_img = dict_to_device(generation_input_cfg_img, self.device)
+        if use_cfg and cfg_img_precontext is not None:
+            cfg_img_past_key_values = cfg_img_precontext["past_key_values"]
+            kv_lens_cfg = cfg_img_precontext["kv_lens"]
+            ropes_cfg = cfg_img_precontext["ropes"]
+            generation_input_cfg_img = self.model.prepare_vae_latent_cfg(
+                curr_kvlens=kv_lens_cfg,
+                curr_rope=ropes_cfg,
+                image_sizes=[image_shape],
+            )
+            generation_input_cfg_img = dict_to_device(generation_input_cfg_img, self.device)
+        else:
+            cfg_img_past_key_values = None
+            generation_input_cfg_img = {
+                "cfg_packed_position_ids": None,
+                "cfg_packed_query_indexes": None,
+                "cfg_key_values_lens": None,
+                "cfg_packed_key_value_indexes": None,
+            }
 
-        unpacked_latent = self.model.generate_image(
+        unpacked_latent, trajectory = self.model.generate_image_with_trajectory(
             past_key_values=past_key_values,
             cfg_text_past_key_values=cfg_text_past_key_values,
             cfg_img_past_key_values=cfg_img_past_key_values,
             num_timesteps=num_timesteps,
-            cfg_text_scale=cfg_text_scale,
-            cfg_img_scale=cfg_img_scale,
+            cfg_text_scale=cfg_text_scale_,
+            cfg_img_scale=cfg_img_scale_,
             cfg_interval=cfg_interval,
             cfg_renorm_min=cfg_renorm_min,
             cfg_renorm_type=cfg_renorm_type,
             timestep_shift=timestep_shift,
+            sde_sigma=sde_sigma,
+            record_trajectory=record_trajectory,
+            gen_context=gen_context,  # Pass gen_context for context retrieval
             **generation_input,
             cfg_text_packed_position_ids=generation_input_cfg_text[
                 "cfg_packed_position_ids"
@@ -221,7 +254,7 @@ class InterleaveInferencer:
         )
 
         image = self.decode_image(unpacked_latent[0], image_shape)
-        return image
+        return image, trajectory
 
 
     def decode_image(self, latent, image_shape):
@@ -480,14 +513,22 @@ class InterleaveInferencer:
         output_need_vae=False,  # 控制生成图片后是否将 VAE token 插入上下文
         output_need_vit=True,   # 控制生成图片后是否将 ViT token 插入上下文
         consider_think=True,
+        sde_sigma=0.0,
+        record_trajectory=False,
         **kwargs,
-    ) -> List[Union[str, Image.Image]]:
-        # cooperative reasoning and perception generation function
-        # the input_list shuould have the input image and the text prompt
-        # it can generate the interleaved multimodal chain-of-thought by the model
-        # but the image generation is decided by the model itself
+    ) -> Tuple[List[Union[str, Image.Image]], List[Dict]]:
+        """
+        Cooperative reasoning and perception generation function.
+        The input_list should have the input image and the text prompt.
+        It can generate the interleaved multimodal chain-of-thought by the model,
+        but the image generation is decided by the model itself.
 
+        Returns:
+            output_list: output list (text and images)
+            trajectories: image generation trajectory list (if record_trajectory=True)
+        """
         output_list = []
+        trajectories = []
         gen_context = self.init_gen_context()
         cfg_text_context = deepcopy(gen_context)
         edit_cfg_img_context = deepcopy(gen_context)
@@ -539,7 +580,7 @@ class InterleaveInferencer:
                 # 检查是否达成最终答案
                 answer_match = re.search(answer_pattern, gen_text, re.DOTALL)
                 if answer_match:
-                    return output_list
+                    return output_list, trajectories
 
                 if inter_num >= max_inter_num:
                     break
@@ -563,7 +604,7 @@ class InterleaveInferencer:
                     )
                     
                     # 3. 调用图像生成（恢复）工具
-                    img = self.gen_image(
+                    img, trajectory = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
                         cfg_text_precontext=cfg_text_context,
@@ -575,10 +616,16 @@ class InterleaveInferencer:
                         num_timesteps=num_timesteps,
                         cfg_renorm_min=cfg_renorm_min,
                         cfg_renorm_type=cfg_renorm_type,
+                        sde_sigma=sde_sigma,
+                        record_trajectory=record_trajectory,
                     )
 
                     # 4. 反馈结果
                     output_list.append(pil_img2rgb(img))
+
+                    # Collect trajectory if requested
+                    if trajectory is not None:
+                        trajectories.append(trajectory)
 
                     # 根据开关决定是否将生成的图片喂回模型 KV Cache
                     if output_need_vae or output_need_vit:
@@ -595,7 +642,7 @@ class InterleaveInferencer:
                 else:
                     break
 
-        return output_list
+        return output_list, trajectories
 
 
     @torch.no_grad()

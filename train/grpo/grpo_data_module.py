@@ -110,7 +110,5 @@ class GRPODataset(Dataset):
             "solution": answer,
             "image": img,
             "data_id": data_id,
-            # "flag": flag,
-            # 如果你后面可能还想用 subset，也可以顺手返回
-            # "subset": data.get("subset", ""),
+            "image_name": image_name,
         }

@@ -1,8 +1,7 @@
 # Copyright 2025 Bytedance Ltd. and/or its affiliates.
 # SPDX-License-Identifier: Apache-2.0
 
-import copy
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 
 import torch
 import torch.nn.functional as F
@@ -1172,6 +1171,209 @@ class Bagel(PreTrainedModel):
             # No CFG
             pass
 
+        return v_t
+
+    def generate_image_with_trajectory(
+        self,
+        packed_text_ids: torch.LongTensor,
+        packed_text_indexes: torch.LongTensor,
+        packed_init_noises: torch.Tensor,
+        packed_vae_position_ids: torch.LongTensor,
+        packed_vae_token_indexes: torch.LongTensor,
+        packed_seqlens: torch.IntTensor,
+        packed_position_ids: torch.LongTensor,
+        packed_indexes: torch.LongTensor,
+        past_key_values: NaiveCache,
+        key_values_lens: torch.IntTensor,
+        packed_key_value_indexes: torch.LongTensor,
+        num_timesteps: int = 24,
+        timestep_shift: float = 1.0,
+        cfg_renorm_min: float = 0.0,
+        cfg_renorm_type: str = "global",
+        cfg_interval: Optional[Tuple[float, float]] = [0, 1],
+        sde_sigma: float = 0.0,
+        record_trajectory: bool = False,
+        gen_context=None,  # New parameter for context storage
+        # cfg_text
+        cfg_text_scale: float = 1.0,
+        cfg_text_packed_query_indexes: Optional[torch.LongTensor] = None,
+        cfg_text_packed_position_ids: Optional[torch.LongTensor] = None,
+        cfg_text_past_key_values: Optional[NaiveCache] = None,
+        cfg_text_key_values_lens: Optional[torch.IntTensor] = None,
+        cfg_text_packed_key_value_indexes: Optional[torch.LongTensor] = None,
+        # cfg_img
+        cfg_img_scale: float = 1.0,
+        cfg_img_packed_query_indexes: Optional[torch.LongTensor] = None,
+        cfg_img_packed_position_ids: Optional[torch.LongTensor] = None,
+        cfg_img_past_key_values: Optional[NaiveCache] = None,
+        cfg_img_key_values_lens: Optional[torch.IntTensor] = None,
+        cfg_img_packed_key_value_indexes: Optional[torch.LongTensor] = None,
+        cfg_type: str = "parallel",
+    ) -> Tuple[List[torch.Tensor], Optional[List[Dict]]]:
+        """
+        Support SDE sampling and trajectory recording for image generation.
+
+        Returns:
+            unpacked_latent: unpacked latent
+            trajectory: trajectory list if record_trajectory=True, otherwise None
+        """
+        x_t = packed_init_noises
+        trajectory = [] if record_trajectory else None
+
+        timesteps = torch.linspace(1, 0, num_timesteps, device=x_t.device)
+        timesteps = timestep_shift * timesteps / (1 + (timestep_shift - 1) * timesteps)
+        dts = timesteps[:-1] - timesteps[1:]
+        timesteps = timesteps[:-1]
+
+        for i, t in enumerate(timesteps):
+            timestep = torch.tensor([t] * x_t.shape[0], device=x_t.device)
+
+            # In SDE mode, disable CFG
+            if sde_sigma > 0:
+                cfg_text_scale_ = 1.0
+                cfg_img_scale_ = 1.0
+            elif t > cfg_interval[0] and t <= cfg_interval[1]:
+                cfg_text_scale_ = cfg_text_scale
+                cfg_img_scale_ = cfg_img_scale
+            else:
+                cfg_text_scale_ = 1.0
+                cfg_img_scale_ = 1.0
+
+            v_t = self._forward_flow(
+                x_t=x_t,
+                timestep=timestep,
+                packed_vae_token_indexes=packed_vae_token_indexes,
+                packed_vae_position_ids=packed_vae_position_ids,
+                packed_text_ids=packed_text_ids,
+                packed_text_indexes=packed_text_indexes,
+                packed_position_ids=packed_position_ids,
+                packed_indexes=packed_indexes,
+                packed_seqlens=packed_seqlens,
+                key_values_lens=key_values_lens,
+                past_key_values=past_key_values,
+                packed_key_value_indexes=packed_key_value_indexes,
+                cfg_renorm_min=cfg_renorm_min,
+                cfg_renorm_type=cfg_renorm_type,
+                # cfg_text
+                cfg_text_scale=cfg_text_scale_,
+                cfg_text_packed_position_ids=cfg_text_packed_position_ids,
+                cfg_text_packed_query_indexes=cfg_text_packed_query_indexes,
+                cfg_text_key_values_lens=cfg_text_key_values_lens,
+                cfg_text_past_key_values=cfg_text_past_key_values,
+                cfg_text_packed_key_value_indexes=cfg_text_packed_key_value_indexes,
+                # cfg_img
+                cfg_img_scale=cfg_img_scale_,
+                cfg_img_packed_position_ids=cfg_img_packed_position_ids,
+                cfg_img_packed_query_indexes=cfg_img_packed_query_indexes,
+                cfg_img_key_values_lens=cfg_img_key_values_lens,
+                cfg_img_past_key_values=cfg_img_past_key_values,
+                cfg_img_packed_key_value_indexes=cfg_img_packed_key_value_indexes,
+                cfg_type=cfg_type,
+            )
+
+            if sde_sigma > 0:
+                # SDE mode: compute drift and sample noise
+                # drift = v_t + (sigma_t^2 / 2) * score
+                # score = (x_t + (1 - t) * v_t) / t
+                score = (x_t + (1 - t) * v_t) / t
+                drift = v_t + (sde_sigma ** 2 / 2) * score
+
+                noise = torch.randn_like(x_t)
+                dt = dts[i]
+                x_next = x_t + drift * dt + sde_sigma * torch.sqrt(dt.abs()) * noise
+
+                # Record trajectory
+                if record_trajectory:
+                    trajectory.append({
+                        'x_t': x_t.detach().cpu(),
+                        'x_next': x_next.detach().cpu(),
+                        'noise': noise.detach().cpu(),
+                        'timestep': t.item() if isinstance(t, torch.Tensor) else float(t),
+                        'v_pred': v_t.detach().cpu(),
+                    })
+
+                x_t = x_next
+            else:
+                # ODE mode (existing logic)
+                x_t = x_t - v_t.to(x_t.device) * dts[i]
+
+        unpacked_latent = x_t.split((packed_seqlens - 2).tolist())
+
+        # Add generation context to trajectory for log prob recomputation
+        if record_trajectory and trajectory:
+            # 只存轻量级的 static params，不存 past_key_values（避免 OOM）
+            trajectory_context = {
+                'packed_vae_position_ids': packed_vae_position_ids.detach().cpu(),
+                'packed_vae_token_indexes': packed_vae_token_indexes.detach().cpu(),
+                'packed_text_ids': packed_text_ids.detach().cpu(),
+                'packed_text_indexes': packed_text_indexes.detach().cpu(),
+                'packed_position_ids': packed_position_ids.detach().cpu(),
+                'packed_indexes': packed_indexes.detach().cpu(),
+                'packed_seqlens': packed_seqlens.detach().cpu(),
+                'key_values_lens': key_values_lens.detach().cpu(),
+                'packed_key_value_indexes': packed_key_value_indexes.detach().cpu(),
+            }
+            trajectory[-1]['_context'] = trajectory_context
+
+        return unpacked_latent, trajectory
+
+    def forward_velocity(
+        self,
+        x_t: torch.Tensor,
+        timestep: torch.Tensor,
+        packed_vae_token_indexes: torch.LongTensor,
+        packed_vae_position_ids: torch.LongTensor,
+        packed_text_ids: torch.LongTensor,
+        packed_text_indexes: torch.LongTensor,
+        packed_indexes: torch.LongTensor,
+        packed_position_ids: torch.LongTensor,
+        packed_seqlens: torch.IntTensor,
+        key_values_lens: torch.IntTensor,
+        past_key_values: NaiveCache,
+        packed_key_value_indexes: torch.LongTensor,
+    ) -> torch.Tensor:
+        """
+        Independent velocity field prediction method for training log probs.
+
+        Same as _forward_flow but returns raw v_t (no CFG, cfg_text_scale=1.0, cfg_img_scale=1.0).
+        This method is designed to be called during training with gradients enabled.
+        """
+        packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
+        packed_sequence = packed_text_embedding.new_zeros(
+            (sum(packed_seqlens), self.hidden_size)
+        )
+        packed_sequence[packed_text_indexes] = packed_text_embedding
+
+        assert timestep.unique().shape[0] == 1
+        packed_pos_embed = self.latent_pos_embed(packed_vae_position_ids)
+        packed_timestep_embeds = self.time_embedder(timestep)
+        x_t = self.vae2llm(x_t) + packed_timestep_embeds + packed_pos_embed
+        packed_sequence[packed_vae_token_indexes] = x_t
+
+        extra_inputs = {}
+        if self.use_moe:
+            extra_inputs = {
+                "mode": "gen",
+                "packed_vae_token_indexes": packed_vae_token_indexes,
+                "packed_text_indexes": packed_text_indexes,
+            }
+
+        output = self.language_model.forward_inference(
+            packed_query_sequence=packed_sequence,
+            query_lens=packed_seqlens,
+            packed_query_position_ids=packed_position_ids,
+            packed_query_indexes=packed_indexes,
+            past_key_values=past_key_values,
+            key_values_lens=key_values_lens,
+            packed_key_value_indexes=packed_key_value_indexes,
+            update_past_key_values=False,
+            is_causal=False,
+            **extra_inputs,
+        )
+        v_t = self.llm2vae(output.packed_query_sequence)
+        v_t = v_t[packed_vae_token_indexes]
+
+        # No CFG - return raw velocity prediction
         return v_t
 
     def prepare_start_tokens(self, curr_kvlens, curr_rope, new_token_ids):
