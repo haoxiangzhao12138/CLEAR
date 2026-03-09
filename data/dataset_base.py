@@ -73,6 +73,8 @@ class PackedDataset(torch.utils.data.IterableDataset):
         self.world_size = world_size
         self.num_workers = num_workers
         self.use_flex = use_flex
+        self.data_config = data_config
+
         for k, v in special_tokens.items():
             setattr(self, k, v)
 
@@ -83,7 +85,6 @@ class PackedDataset(torch.utils.data.IterableDataset):
         self.dataset_iters = [iter(dataset) for dataset in grouped_datasets]
         self.is_mandatory = is_mandatory
         self.grouped_weights = grouped_weights
-        self.data_config = data_config
         self.interpolate_pos = interpolate_pos
         if self.interpolate_pos:
             self.get_flattened_position_ids = get_flattened_position_ids_interpolate
