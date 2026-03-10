@@ -475,11 +475,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         do_sample=True,
                         text_temperature=self.args.temperature,
                         timestep_shift=self.args.timestep_shift,
-                        num_timesteps=(
-                            self.args.num_timesteps_train
-                            if self.args.use_flow_grpo
-                            else self.args.num_timesteps
-                        ),
+                        num_timesteps=self.args.num_timesteps,  # ODE steps (50) for quality
                         max_think_token_n=self.args.max_think_token_n,
                         top_p=self.args.top_p,
                         image_shapes=example[0].size[::-1],
@@ -487,6 +483,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         output_need_vit=self.args.output_need_vit,
                         sde_sigma=self.args.sde_sigma if self.args.use_flow_grpo else 0.0,
                         record_trajectory=self.args.use_flow_grpo,
+                        num_timesteps_sde=self.args.num_timesteps_train,  # SDE steps (10) for trajectory
                     )  # 返回 Tuple[List[Union[str, Image]], List[Dict]]
                     output_list.append(output)
                     if self.args.use_flow_grpo:
@@ -511,7 +508,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 input_dict_list = self.output_transfer(
                     output_list, device, id_list
                 )  # 转换输出为 dict{str: tensor}
-                
+
                 for i in range(len(input_dict_list)):
                     completions_tokens.append(input_dict_list[i]["completions_tokens"])
                     sequence_length.append(input_dict_list[i]["sequence_length"])
@@ -551,12 +548,6 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                     ref_per_token_logps = self._get_per_token_logps(
                         self.ref_model, input_dict_list
                     )
-
-        # --- 图像 Flow-GRPO log probs (路线 A) ---
-        # 路线 A 下 num_iterations=1 时，old = new.detach()，在 _compute_loss 中处理
-        # 这里只需要传递 trajectory，不需要预计算 log probs
-        old_image_log_probs = None
-        ref_image_log_probs = None
 
         start_time = time.time()
         # --- 计算奖励 (Compute Rewards) ---
@@ -716,10 +707,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             "is_eos": is_eos,  # 是否以 EOS 结束
             "old_per_token_logps": old_per_token_logps,  # 旧的 log probabilities
             "ref_per_token_logps": ref_per_token_logps,  # 参考模型的 log probabilities
-            # [新增] Flow-GRPO 相关
+            # Flow-GRPO: trajectories for per-step backward in _compute_loss
             "image_trajectories": all_trajectories if self.args.use_flow_grpo else None,
-            "old_image_log_probs": old_image_log_probs,
-            "ref_image_log_probs": ref_image_log_probs,
         }
 
     # Get the per-token log probabilities for the completions for the model and the reference model
@@ -729,12 +718,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
         with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             model.train()
-            torch.cuda.empty_cache()
-            for input_dict in input_dict_list:
-                # with torch.no_grad():
-                input_dict["padded_latent"] = self.vae_model.encode(
-                    input_dict["padded_images"]
-                )
+            for i, input_dict in enumerate(input_dict_list):
+                if input_dict.get("padded_latent") is None:
+                    input_dict["padded_latent"] = self.vae_model.encode(
+                        input_dict["padded_images"]
+                    )
                 logits = model.forward_logits(**input_dict)
                 # Divide logits by sampling temperature.
                 # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
@@ -748,120 +736,251 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             )
         return selective_log_softmax(logits_list, ce_loss_text_ids_list)
 
-    def _compute_image_log_probs(self, model, trajectories_list, input_dict_list):
+    def _build_override_for_step(self, model, input_dict, num_gen_images, img_idx, step, device):
+        """Build override_packed_latent and override_packed_timesteps for one denoising step."""
+        p = model.latent_patch_size
+        latent_channel = model.latent_channel
+        vae_shapes = input_dict["patchified_vae_latent_shapes"]
+        padded_latent = input_dict["padded_latent"]
+
+        num_input_images = len(vae_shapes) - num_gen_images
+
+        override_parts = []
+        override_t_parts = []
+
+        for vae_idx, (h, w) in enumerate(vae_shapes):
+            n_tokens = h * w
+
+            if vae_idx < num_input_images:
+                # Input image: patchify clean latent, timestep=0
+                latent = padded_latent[vae_idx]
+                latent = latent[:, :h*p, :w*p].reshape(latent_channel, h, p, w, p)
+                latent = torch.einsum("chpwq->hwpqc", latent).reshape(-1, p*p*latent_channel)
+                override_parts.append(latent.to(device))
+                override_t_parts.append(torch.zeros(n_tokens, device=device))
+            elif vae_idx - num_input_images == img_idx:
+                # Current training target: use x_t from trajectory
+                x_t = step['x_t'].to(device)
+                override_parts.append(x_t)
+                override_t_parts.append(torch.full((n_tokens,), step['timestep'], device=device))
+            else:
+                # Other generated images: zero-fill, timestep=0
+                override_parts.append(torch.zeros(n_tokens, p*p*latent_channel, device=device))
+                override_t_parts.append(torch.zeros(n_tokens, device=device))
+
+        return torch.cat(override_parts, dim=0), torch.cat(override_t_parts, dim=0)
+
+    def _build_clean_override(self, model, input_dict, device):
+        """Build override that replicates normal t=0 forward for all images.
+
+        Used as a dummy override for samples without trajectory, ensuring
+        ZeRO-3 code path symmetry while producing identical hidden states
+        to the normal (non-override) forward path.
+
+        Normal forward with packed_timesteps=-inf:
+            sigmoid(-inf) = 0  →  shifted t = 0  →  x_t = clean latent
+        This override explicitly provides the same patchified clean latent
+        with timestep=0, yielding the same vae2llm + time_embedder output.
         """
-        路线 A：用采样时记录的 v_pred 近似计算 SDE log probability。
-        不需要重新 forward，不需要 past_key_values。
-        当 num_iterations=1 时，old 和 new 都用同一个 v_pred，ratio=1，
-        优化信号完全来自 advantage（由 image_similarity_reward 提供）。
-        """
-        all_log_probs = []
-        device = self.accelerator.device
+        p = model.latent_patch_size
+        latent_channel = model.latent_channel
+        vae_shapes = input_dict["patchified_vae_latent_shapes"]
+        padded_latent = input_dict["padded_latent"]
 
-        if not trajectories_list or not trajectories_list[0]:
-            return all_log_probs
+        override_parts = []
+        override_t_parts = []
 
-        for sample_idx, trajectories in enumerate(trajectories_list):
-            sample_log_probs = []
+        for vae_idx, (h, w) in enumerate(vae_shapes):
+            n_tokens = h * w
+            latent = padded_latent[vae_idx]
+            latent = latent[:, :h * p, :w * p].reshape(latent_channel, h, p, w, p)
+            latent = torch.einsum("chpwq->hwpqc", latent).reshape(-1, p * p * latent_channel)
+            override_parts.append(latent.to(device))
+            override_t_parts.append(torch.zeros(n_tokens, device=device))
 
-            if not trajectories:
-                all_log_probs.append(sample_log_probs)
-                continue
+        return torch.cat(override_parts, dim=0), torch.cat(override_t_parts, dim=0)
 
-            for traj in trajectories:
-                if not traj:
-                    continue
+    def _extract_gen_vpred(self, v_pred_all, input_dict, num_gen_images, img_idx):
+        """Extract v_pred slice for the img_idx-th generated image from v_pred_all."""
+        vae_shapes = input_dict["patchified_vae_latent_shapes"]
+        num_input_images = len(vae_shapes) - num_gen_images
 
-                steps = [s for s in traj if '_context' not in s]
-                if not steps:
-                    continue
-
-                step_log_probs = []
-                for step in steps:
-                    x_t = step['x_t'].to(device)
-                    t = step['timestep']
-                    x_next = step['x_next'].to(device)
-                    v_pred = step['v_pred'].to(device)
-
-                    # SDE 转移分布的 log prob
-                    t_val = t if isinstance(t, float) else t.item() if isinstance(t, torch.Tensor) else float(t)
-                    score = (x_t + (1 - t_val) * v_pred) / max(t_val, 1e-6)
-                    drift = v_pred + (self.args.sde_sigma ** 2 / 2) * score
-                    dt = 1.0 / self.args.num_timesteps_train
-                    mu = x_t + drift * dt
-                    variance = self.args.sde_sigma ** 2 * dt
-
-                    log_p = -0.5 * ((x_next - mu) ** 2 / variance).sum()
-                    step_log_probs.append(log_p)
-
-                if step_log_probs:
-                    sample_log_probs.append(torch.stack(step_log_probs))
-
-            all_log_probs.append(sample_log_probs)
-
-        return all_log_probs
-
-    def _compute_image_grpo_loss(
-        self,
-        new_log_probs,      # 当前模型的 per-step log π
-        old_log_probs,      # 旧模型的 per-step log π
-        ref_log_probs,      # 参考模型的 per-step log π（可选）
-        advantage,          # 标量，和文本共享同一个 advantage
-    ):
-        """
-        计算图像 GRPO loss。
-
-        与文本 GRPO 类似，但"token"变成"去噪步"。
-        """
-        # 重要性比率
-        ratio = torch.exp(new_log_probs - old_log_probs)
-
-        # PPO-style 裁剪
-        clipped_ratio = torch.clamp(ratio, 1 - self.epsilon_low, 1 + self.epsilon_high)
-
-        # GRPO loss
-        loss1 = ratio * advantage
-        loss2 = clipped_ratio * advantage
-        policy_loss = -torch.min(loss1, loss2)
-
-        # KL 约束
-        if self.beta > 0 and ref_log_probs is not None:
-            kl = (torch.exp(ref_log_probs - new_log_probs)
-                  - (ref_log_probs - new_log_probs) - 1)
-            policy_loss = policy_loss + self.beta * kl
-
-        return policy_loss.mean()
+        offset = 0
+        for vae_idx, (h, w) in enumerate(vae_shapes):
+            n_tokens = h * w
+            if vae_idx == num_input_images + img_idx:
+                return v_pred_all[offset:offset + n_tokens]
+            offset += n_tokens
+        raise ValueError(f"Image index {img_idx} not found in vae_shapes")
 
     def _compute_loss(self, model, inputs):
-        # Compute the per-token log probabilities for the model
+        # ================================================================
+        # Single-step Unbiased Interleaved Flow-GRPO
+        #
+        # Core idea: merge the text-logits forward and the image-vpred
+        # forward into ONE forward_logits(return_vpred=True) call so that
+        # text and image gradients share the same computation graph.
+        #
+        # OLD: 2 forwards per sample
+        #   1) _get_per_token_logps → forward_logits() → text logits
+        #   2) forward_logits(return_vpred_only=True) → image v_pred
+        #   → text/image gradients disconnected
+        #
+        # NEW: 1 forward per sample
+        #   forward_logits(return_vpred=True, override_packed_latent=x_t*)
+        #   → (text logits, image v_pred) from the SAME hidden states
+        #   → gradients flow: img_loss → v_pred → attention → text repr
+        #                      text_loss → logits → attention → image repr
+        # ================================================================
         device = self.accelerator.device
+
         input_dict_list = inputs["input_dict_list"]
+        advantages = inputs["advantages"]
+
         completion_tokens_text = []
         for input_dict in input_dict_list:
             completion_tokens_text.append(input_dict["completions_tokens_text"])
         completion_tokens_text = torch.tensor(completion_tokens_text).to(device)
 
-        # (per_token_logps, entropy) = self._get_per_token_logps(
-        #     model, input_dict_list, get_entropy=True
-        # )
-        # if self.args.ce_weight != 0.0:
-        (per_token_logps, entropy) = self._get_per_token_logps(
-            model, input_dict_list, get_entropy=True
-        )
-        # per_device_batch_size = 1, so the length of list returned from selective_log_softmax is 1
+        # === Phase 1: Determine trajectory step for Flow-GRPO ===
+        has_step = False
+        chosen_sample_idx = 0
+        chosen_img_idx = 0
+        chosen_step = None
+        sde_sigma = self.args.sde_sigma if self.args.use_flow_grpo else 0.0
+        _img_delta_logps = []
+        _img_ratios = []
+        _img_v_norms = []
+        image_loss = torch.tensor(0.0, device=device, requires_grad=False)
+        image_loss_value = 0.0
+
+        if self.args.use_flow_grpo:
+            trajectories_list = inputs.get("image_trajectories")
+
+            if trajectories_list is not None:
+                candidates = []
+                for sample_idx, sample_trajs in enumerate(trajectories_list):
+                    if not sample_trajs:
+                        continue
+                    for img_idx, traj in enumerate(sample_trajs):
+                        if not traj:
+                            continue
+                        steps = [s for s in traj if '_context' not in s]
+                        for s in steps:
+                            candidates.append((sample_idx, img_idx, s))
+                if candidates:
+                    import random
+                    chosen_sample_idx, chosen_img_idx, chosen_step = random.choice(candidates)
+                    has_step = True
+
+        # === Phase 2: Combined forward — text logits + image v_pred ===
+        # When use_flow_grpo=True, every rank does exactly ONE forward_logits
+        # call with override + return_vpred=True, ensuring:
+        #   - ZeRO-3 symmetry (same params touched on all ranks)
+        #   - Gradient connectivity (text↔image through shared hidden states)
+        #   - One backward for both text_loss and image_loss
+        logits_list = []
+        ce_loss_text_ids_list = []
+
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            model.train()
+            for i, input_dict in enumerate(input_dict_list):
+                # VAE encode if not already done
+                if input_dict.get("padded_latent") is None:
+                    input_dict["padded_latent"] = self.vae_model.encode(
+                        input_dict["padded_images"]
+                    )
+
+                has_vae = input_dict.get("packed_vae_token_indexes") is not None
+
+                if self.args.use_flow_grpo and has_vae:
+                    # --- Build override latent ---
+                    # Real override for chosen sample: x_{t*} at generated image position
+                    # Clean override for others: replicates normal t=0 forward exactly
+                    if has_step and i == chosen_sample_idx:
+                        num_gen_images = len(trajectories_list[chosen_sample_idx])
+                        override_latent, override_timesteps = self._build_override_for_step(
+                            model, input_dict, num_gen_images,
+                            chosen_img_idx, chosen_step, device
+                        )
+                    else:
+                        override_latent, override_timesteps = self._build_clean_override(
+                            model, input_dict, device
+                        )
+
+                    # --- Single combined forward: both logits AND v_pred ---
+                    logits, v_pred_all = model.forward_logits(
+                        **input_dict,
+                        override_packed_latent=override_latent,
+                        override_packed_timesteps=override_timesteps,
+                        return_vpred=True,
+                    )
+
+                    # Anchor: value=0 but keeps vae2llm/llm2vae/time_embedder in the
+                    # backward graph on ALL ranks, preventing ZeRO-3 reduce-scatter deadlock.
+                    anchor = (v_pred_all * 0).sum()
+
+                    # --- Compute image Flow-GRPO loss from the SAME forward ---
+                    if has_step and i == chosen_sample_idx:
+                        v_pred_img = self._extract_gen_vpred(
+                            v_pred_all, input_dict,
+                            len(trajectories_list[chosen_sample_idx]), chosen_img_idx
+                        )
+
+                        x_t = chosen_step['x_t'].to(device)
+                        x_next = chosen_step['x_next'].to(device)
+                        t_val = chosen_step['timestep']
+                        dt_val = chosen_step['dt']
+
+                        t_safe = max(t_val, 1e-6)
+                        score_neg = (x_t + (1 - t_safe) * v_pred_img) / t_safe
+                        drift = v_pred_img + (sde_sigma ** 2 / 2) * score_neg
+                        mu_new = x_t - drift * dt_val
+                        variance = sde_sigma ** 2 * dt_val
+                        log_p_new = -0.5 * ((x_next - mu_new) ** 2 / variance).mean()
+
+                        if self.num_iterations > 1:
+                            log_p_old = torch.tensor(chosen_step['log_prob_old'], device=device)
+                        else:
+                            log_p_old = log_p_new.detach()
+
+                        delta_logp = log_p_new - log_p_old
+                        ratio = torch.exp(delta_logp)
+                        adv = advantages[chosen_sample_idx]
+                        clipped_ratio = torch.clamp(
+                            ratio, 1 - self.epsilon_low, 1 + self.epsilon_high
+                        )
+                        image_loss = -torch.min(ratio * adv, clipped_ratio * adv) + anchor
+                        image_loss_value = image_loss.item()
+
+                        _img_delta_logps.append(delta_logp.item())
+                        _img_ratios.append(ratio.item())
+                        _img_v_norms.append(v_pred_img.detach().norm().item())
+                    else:
+                        image_loss = image_loss + anchor  # value≈0, but grad-connected
+
+                else:
+                    # No Flow-GRPO or no VAE tokens: standard text-only forward
+                    logits = model.forward_logits(**input_dict)
+
+                logits = logits / self.temperature
+                logits_list.append(logits)
+                ce_loss_text_ids_list.append(input_dict["ce_loss_text_ids"])
+
+        # === Phase 3: Text GRPO loss ===
+        per_token_logps = selective_log_softmax(logits_list, ce_loss_text_ids_list)
+        entropy = average_entropy_from_logits_list(logits_list)
+        # per_device_batch_size = 1, so the list has 1 element
         per_token_logps = per_token_logps[0]
 
-        # [MOD] 基于每个样本实际“文本补全长度”构造逐 token 掩码
-        # 原因：selective_log_softmax 在样本间对齐时用 0 右填充；若不加 mask，这些补位会参与 GRPO 损失与指标，产生系统性偏差。
+        # Mask: only real completion tokens (exclude right-padding)
         max_len = per_token_logps.size(1)
-        token_indices = torch.arange(max_len, device=device).unsqueeze(
-            0
-        )  # (1, max_len)
+        token_indices = torch.arange(max_len, device=device).unsqueeze(0)  # (1, max_len)
         mask = (token_indices < completion_tokens_text.unsqueeze(1)).to(
             per_token_logps.dtype
         )  # (B, max_len)
 
-        # Compute the KL divergence between the model and the reference model
+        # KL divergence
         if self.beta != 0.0:
             ref_per_token_logps = inputs["ref_per_token_logps"][0]
             per_token_kl = (
@@ -869,97 +988,42 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 - (ref_per_token_logps - per_token_logps)
                 - 1
             )
-            # [MOD] KL 也仅在有效 token 上统计
-            # 原因：与损失一致，屏蔽补位，避免 KL 被无效位置稀释或放大。
             per_token_kl = per_token_kl * mask
 
-        # Compute the loss
-        advantages = inputs["advantages"]
-        # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip it's computation (see
-        # _generate_and_score_completions) and use per_token_logps.detach() instead.
+        # PPO-clip loss
         old_per_token_logps = (
             inputs["old_per_token_logps"][0]
             if self.num_iterations > 1
             else per_token_logps.detach()
         )
-        coef_1 = torch.exp(per_token_logps - old_per_token_logps)  # 1
+        coef_1 = torch.exp(per_token_logps - old_per_token_logps)
         coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
         per_token_loss1 = coef_1 * advantages.unsqueeze(1)
         per_token_loss2 = coef_2 * advantages.unsqueeze(1)
         per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
-        # per_token_loss = torch.min(per_token_loss1, per_token_loss2)
+
         if self.beta != 0.0:
             per_token_loss = per_token_loss + self.beta * per_token_kl
         if self.mask_truncated_completions:
             mask = mask * inputs["is_eos"].to(per_token_loss.dtype).unsqueeze(1)
 
-        # [MOD] 将所有逐 token 的和/均值计算改为基于 mask
-        # 原因：只对真实的 completion 文本 token 聚合，避免把补位当成有效 token。
         valid_counts = mask.sum(-1).clamp(min=1.0)  # (B,)
 
         if self.loss_type == "grpo":
-            loss = ((per_token_loss * mask).sum(-1) / valid_counts).mean()
+            text_loss = ((per_token_loss * mask).sum(-1) / valid_counts).mean()
         elif self.loss_type == "bnpo":
-            loss = (per_token_loss * mask).sum() / valid_counts.sum().clamp(min=1.0)
+            text_loss = (per_token_loss * mask).sum() / valid_counts.sum().clamp(min=1.0)
         elif self.loss_type == "dr_grpo":
-            # 注：保持与 TRL 一致的 denom（批大小 * max_completion_length），但数值只来自有效 token
-            loss = (per_token_loss * mask).sum() / (
+            text_loss = (per_token_loss * mask).sum() / (
                 per_token_loss.size(0) * self.max_completion_length
             )
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
-        # 保存文本 loss 引用，避免被后续变量覆盖
-        text_loss = loss
-
-        # === 新增的图像 Flow-GRPO loss ===
-        image_loss = torch.tensor(0.0, device=device)
-
-        if self.args.use_flow_grpo and inputs.get("image_trajectories") is not None:
-            trajectories_list = inputs["image_trajectories"]
-            old_image_log_probs = inputs["old_image_log_probs"]
-            ref_image_log_probs = inputs.get("ref_image_log_probs")
-
-            # 路线 A：v_pred 来自采样时的记录（已 detach），不需要 no_grad
-            new_image_log_probs = self._compute_image_log_probs(
-                model, trajectories_list, inputs["input_dict_list"]
-            )
-
-            # 当 num_iterations == 1 时，用当前模型的 detach 版本作为 old
-            # 路线 A 下不重新计算 v_pred，old 和 new 本质相同
-            if old_image_log_probs is None:
-                old_image_log_probs = [
-                    [new.detach() for new in new_sample]
-                    for new_sample in new_image_log_probs
-                ]
-
-            # 计算每个样本的图像 loss
-            advantages = inputs["advantages"]
-
-            total_image_loss = 0.0
-            num_steps = 0
-
-            for sample_idx, (new_probs, old_probs, adv) in enumerate(
-                zip(new_image_log_probs, old_image_log_probs, advantages)
-            ):
-                ref_probs = ref_image_log_probs[sample_idx] if ref_image_log_probs else None
-
-                for img_idx, (new_img_probs, old_img_probs) in enumerate(zip(new_probs, old_probs)):
-                    ref_img_probs = ref_probs[img_idx] if ref_probs else None
-
-                    img_loss = self._compute_image_grpo_loss(
-                        new_img_probs, old_img_probs, ref_img_probs, adv
-                    )
-                    total_image_loss += img_loss
-                    num_steps += 1
-
-            if num_steps > 0:
-                image_loss = total_image_loss / num_steps
-
-        # === 合并 ===
+        # === Phase 4: Combine — ONE backward for both ===
         total_loss = text_loss + self.args.image_loss_weight * image_loss
 
-        # Log the metrics
+        # === Phase 5: Metrics logging (unchanged) ===
         mode = "eval" if self.control.should_evaluate else "train"
 
         gathered_entropy = self.accelerator.gather_for_metrics(entropy)
@@ -971,15 +1035,13 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 self.accelerator.gather_for_metrics(mean_kl).nanmean().item()
             )
 
-        # Compute the clipped probability ratios
+        # Clipped probability ratio stats
         is_low_clipped = (coef_1 < 1 - self.epsilon_low) & (advantages.unsqueeze(1) < 0)
         is_high_clipped = (coef_1 > 1 + self.epsilon_high) & (
             advantages.unsqueeze(1) > 0
         )
         is_region_clipped = is_low_clipped | is_high_clipped
 
-        # [MOD] 裁剪统计同样用 mask 权重并按有效 token 归一
-        # 原因：否则补位（右侧 padding）会拉高/拉低裁剪比例，指标不真实。
         denom = valid_counts.sum().clamp(min=1.0)
         low_clip = (is_low_clipped.to(mask.dtype) * mask).sum() / denom
         high_clip = (is_high_clipped.to(mask.dtype) * mask).sum() / denom
@@ -1004,10 +1066,28 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             gathered_clip_ratio.nanmean().item()
         )
 
-        # Log image GRPO loss
+        # Image GRPO diagnostics
         if self.args.use_flow_grpo:
-            self._metrics[mode].setdefault("image_grpo_loss", []).append(image_loss.item())
+            self._metrics[mode].setdefault("image_grpo_loss", []).append(image_loss_value)
+            if _img_delta_logps:
+                n = len(_img_delta_logps)
+                self._metrics[mode].setdefault("image/delta_logp_mean", []).append(
+                    sum(_img_delta_logps) / n
+                )
+                self._metrics[mode].setdefault("image/ratio_mean", []).append(
+                    sum(_img_ratios) / n
+                )
+                self._metrics[mode].setdefault("image/ratio_max", []).append(
+                    max(_img_ratios)
+                )
+                self._metrics[mode].setdefault("image/anchor_loss", []).append(
+                    image_loss_value
+                )
+                self._metrics[mode].setdefault("image/v_norm", []).append(
+                    sum(_img_v_norms) / n
+                )
 
+        # Return combined loss — framework does ONE backward call
         return total_loss
 
     @profiling_decorator

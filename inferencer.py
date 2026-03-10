@@ -152,6 +152,7 @@ class InterleaveInferencer:
         timestep_shift=3.0,
         sde_sigma=0.0,
         record_trajectory=False,
+        num_timesteps_sde=10,
     ):
         past_key_values = gen_context["past_key_values"]
         kv_lens = gen_context["kv_lens"]
@@ -216,45 +217,118 @@ class InterleaveInferencer:
                 "cfg_packed_key_value_indexes": None,
             }
 
-        unpacked_latent, trajectory = self.model.generate_image_with_trajectory(
-            past_key_values=past_key_values,
-            cfg_text_past_key_values=cfg_text_past_key_values,
-            cfg_img_past_key_values=cfg_img_past_key_values,
-            num_timesteps=num_timesteps,
-            cfg_text_scale=cfg_text_scale_,
-            cfg_img_scale=cfg_img_scale_,
-            cfg_interval=cfg_interval,
-            cfg_renorm_min=cfg_renorm_min,
-            cfg_renorm_type=cfg_renorm_type,
-            timestep_shift=timestep_shift,
-            sde_sigma=sde_sigma,
-            record_trajectory=record_trajectory,
-            gen_context=gen_context,  # Pass gen_context for context retrieval
-            **generation_input,
-            cfg_text_packed_position_ids=generation_input_cfg_text[
-                "cfg_packed_position_ids"
-            ],
-            cfg_text_packed_query_indexes=generation_input_cfg_text[
-                "cfg_packed_query_indexes"
-            ],
-            cfg_text_key_values_lens=generation_input_cfg_text["cfg_key_values_lens"],
-            cfg_text_packed_key_value_indexes=generation_input_cfg_text[
-                "cfg_packed_key_value_indexes"
-            ],
-            cfg_img_packed_position_ids=generation_input_cfg_img[
-                "cfg_packed_position_ids"
-            ],
-            cfg_img_packed_query_indexes=generation_input_cfg_img[
-                "cfg_packed_query_indexes"
-            ],
-            cfg_img_key_values_lens=generation_input_cfg_img["cfg_key_values_lens"],
-            cfg_img_packed_key_value_indexes=generation_input_cfg_img[
-                "cfg_packed_key_value_indexes"
-            ],
-        )
+        # Dual generation mode: 50-step ODE for quality image + 10-step SDE for trajectory
+        if record_trajectory and sde_sigma > 0:
+            # Save initial noise (generate_image modifies x_t in-place)
+            saved_noise = generation_input["packed_init_noises"].clone()
 
-        image = self.decode_image(unpacked_latent[0], image_shape)
-        return image, trajectory
+            # 1. ODE generation → high quality image (for decode + reward + continued reasoning)
+            #    KV cache is read-only (update_past_key_values=False), not modified
+            unpacked_latent = self.model.generate_image(
+                past_key_values=past_key_values,
+                cfg_text_past_key_values=cfg_text_past_key_values,
+                cfg_img_past_key_values=cfg_img_past_key_values,
+                num_timesteps=num_timesteps,
+                cfg_text_scale=cfg_text_scale_,
+                cfg_img_scale=cfg_img_scale_,
+                cfg_interval=cfg_interval,
+                cfg_renorm_min=cfg_renorm_min,
+                cfg_renorm_type=cfg_renorm_type,
+                timestep_shift=timestep_shift,
+                cfg_type="parallel",
+                **generation_input,
+                cfg_text_packed_position_ids=generation_input_cfg_text[
+                    "cfg_packed_position_ids"
+                ],
+                cfg_text_packed_query_indexes=generation_input_cfg_text[
+                    "cfg_packed_query_indexes"
+                ],
+                cfg_text_key_values_lens=generation_input_cfg_text["cfg_key_values_lens"],
+                cfg_text_packed_key_value_indexes=generation_input_cfg_text[
+                    "cfg_packed_key_value_indexes"
+                ],
+                cfg_img_packed_position_ids=generation_input_cfg_img[
+                    "cfg_packed_position_ids"
+                ],
+                cfg_img_packed_query_indexes=generation_input_cfg_img[
+                    "cfg_packed_query_indexes"
+                ],
+                cfg_img_key_values_lens=generation_input_cfg_img["cfg_key_values_lens"],
+                cfg_img_packed_key_value_indexes=generation_input_cfg_img[
+                    "cfg_packed_key_value_indexes"
+                ],
+            )
+
+            # 2. SDE generation → trajectory (for Flow-GRPO training)
+            generation_input["packed_init_noises"] = saved_noise
+            _, trajectory = self.model.generate_image_with_trajectory(
+                past_key_values=past_key_values,
+                cfg_text_past_key_values=None,
+                cfg_img_past_key_values=None,
+                num_timesteps=num_timesteps_sde,
+                cfg_text_scale=1.0,
+                cfg_img_scale=1.0,
+                cfg_interval=cfg_interval,
+                cfg_renorm_min=cfg_renorm_min,
+                cfg_renorm_type=cfg_renorm_type,
+                timestep_shift=timestep_shift,
+                sde_sigma=sde_sigma,
+                record_trajectory=True,
+                gen_context=gen_context,
+                **generation_input,
+                cfg_text_packed_position_ids=None,
+                cfg_text_packed_query_indexes=None,
+                cfg_text_key_values_lens=None,
+                cfg_text_packed_key_value_indexes=None,
+                cfg_img_packed_position_ids=None,
+                cfg_img_packed_query_indexes=None,
+                cfg_img_key_values_lens=None,
+                cfg_img_packed_key_value_indexes=None,
+            )
+
+            image = self.decode_image(unpacked_latent[0], image_shape)
+            return image, trajectory
+        else:
+            # Single call: original logic (ODE or SDE depending on sde_sigma)
+            unpacked_latent, trajectory = self.model.generate_image_with_trajectory(
+                past_key_values=past_key_values,
+                cfg_text_past_key_values=cfg_text_past_key_values,
+                cfg_img_past_key_values=cfg_img_past_key_values,
+                num_timesteps=num_timesteps,
+                cfg_text_scale=cfg_text_scale_,
+                cfg_img_scale=cfg_img_scale_,
+                cfg_interval=cfg_interval,
+                cfg_renorm_min=cfg_renorm_min,
+                cfg_renorm_type=cfg_renorm_type,
+                timestep_shift=timestep_shift,
+                sde_sigma=sde_sigma,
+                record_trajectory=record_trajectory,
+                gen_context=gen_context,
+                **generation_input,
+                cfg_text_packed_position_ids=generation_input_cfg_text[
+                    "cfg_packed_position_ids"
+                ],
+                cfg_text_packed_query_indexes=generation_input_cfg_text[
+                    "cfg_packed_query_indexes"
+                ],
+                cfg_text_key_values_lens=generation_input_cfg_text["cfg_key_values_lens"],
+                cfg_text_packed_key_value_indexes=generation_input_cfg_text[
+                    "cfg_packed_key_value_indexes"
+                ],
+                cfg_img_packed_position_ids=generation_input_cfg_img[
+                    "cfg_packed_position_ids"
+                ],
+                cfg_img_packed_query_indexes=generation_input_cfg_img[
+                    "cfg_packed_query_indexes"
+                ],
+                cfg_img_key_values_lens=generation_input_cfg_img["cfg_key_values_lens"],
+                cfg_img_packed_key_value_indexes=generation_input_cfg_img[
+                    "cfg_packed_key_value_indexes"
+                ],
+            )
+
+            image = self.decode_image(unpacked_latent[0], image_shape)
+            return image, trajectory
 
 
     def decode_image(self, latent, image_shape):
@@ -515,6 +589,7 @@ class InterleaveInferencer:
         consider_think=True,
         sde_sigma=0.0,
         record_trajectory=False,
+        num_timesteps_sde=10,
         **kwargs,
     ) -> Tuple[List[Union[str, Image.Image]], List[Dict]]:
         """
@@ -618,6 +693,7 @@ class InterleaveInferencer:
                         cfg_renorm_type=cfg_renorm_type,
                         sde_sigma=sde_sigma,
                         record_trajectory=record_trajectory,
+                        num_timesteps_sde=num_timesteps_sde,
                     )
 
                     # 4. 反馈结果

@@ -10,3 +10,4 @@ VLMEvalKit/config/test.json
 LMUData
 visualizations/*
 CLAUDE.md
+.claude/settings.local.json

@@ -369,7 +369,7 @@ def image_similarity_reward(completions, image_name, **kwargs):
                         comp["vae_model"], comp["vae_transform"], device,
                     )
         except Exception as e:
-            print(f"[image_similarity_reward] error for {sample_id}: {e}")
+            print(f"[image_similarity_reward] error for {image_name}: {e}")
             sim = 0.0
 
         reward_list.append(float(sim))

@@ -341,6 +341,11 @@ class Bagel(PreTrainedModel):
         packed_latent_position_ids: Optional[torch.LongTensor] = None,
         packed_vae_token_indexes: Optional[torch.LongTensor] = None,
         packed_timesteps: Optional[torch.LongTensor] = None,
+        # Flow-GRPO override: bypass noise/sigmoid/shift, use external x_t and timestep directly
+        override_packed_latent: Optional[torch.Tensor] = None,
+        override_packed_timesteps: Optional[torch.Tensor] = None,
+        return_vpred: bool = False,
+        return_vpred_only: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -410,36 +415,49 @@ class Bagel(PreTrainedModel):
             packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
 
         if self.config.visual_gen:
-            p = self.latent_patch_size
-            packed_latent = []
-            for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
-                latent = latent[:, : h * p, : w * p].reshape(
-                    self.latent_channel, h, p, w, p
+            if override_packed_latent is not None:
+                # Flow-GRPO: use externally provided x_t and timestep directly
+                # (already in real space, no sigmoid/shift needed)
+                packed_latent = override_packed_latent
+                packed_timestep_embeds = self.time_embedder(override_packed_timesteps)
+                latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
+                packed_latent = (
+                    self.vae2llm(packed_latent)
+                    + packed_timestep_embeds
+                    + latent_token_pos_emb
                 )
-                latent = torch.einsum("chpwq->hwpqc", latent).reshape(
-                    -1, p * p * self.latent_channel
-                )
-                packed_latent.append(latent)
-            packed_latent_clean = torch.cat(packed_latent, dim=0)
+                packed_sequence[packed_vae_token_indexes] = packed_latent
+            else:
+                p = self.latent_patch_size
+                packed_latent = []
+                for latent, (h, w) in zip(padded_latent, patchified_vae_latent_shapes):
+                    latent = latent[:, : h * p, : w * p].reshape(
+                        self.latent_channel, h, p, w, p
+                    )
+                    latent = torch.einsum("chpwq->hwpqc", latent).reshape(
+                        -1, p * p * self.latent_channel
+                    )
+                    packed_latent.append(latent)
+                packed_latent_clean = torch.cat(packed_latent, dim=0)
 
-            noise = torch.randn_like(packed_latent_clean)
-            packed_timesteps = torch.sigmoid(packed_timesteps)
-            packed_timesteps = (
-                self.timestep_shift
-                * packed_timesteps
-                / (1 + (self.timestep_shift - 1) * packed_timesteps)
-            )
-            packed_latent = (
-                1 - packed_timesteps[:, None]
-            ) * packed_latent_clean + packed_timesteps[:, None] * noise
-            packed_timestep_embeds = self.time_embedder(packed_timesteps)
-            latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
-            packed_latent = (
-                self.vae2llm(packed_latent)
-                + packed_timestep_embeds
-                + latent_token_pos_emb
-            )
-            packed_sequence[packed_vae_token_indexes] = packed_latent
+                noise = torch.randn_like(packed_latent_clean)
+                packed_timesteps = torch.sigmoid(packed_timesteps)
+                packed_timesteps = (
+                    self.timestep_shift
+                    * packed_timesteps
+                    / (1 + (self.timestep_shift - 1) * packed_timesteps)
+                )
+                packed_latent = (
+                    1 - packed_timesteps[:, None]
+                ) * packed_latent_clean + packed_timesteps[:, None] * noise
+                packed_timestep_embeds = self.time_embedder(packed_timesteps)
+                latent_token_pos_emb = self.latent_pos_embed(packed_latent_position_ids)
+                packed_latent = (
+                    self.vae2llm(packed_latent)
+                    + packed_timestep_embeds
+                    + latent_token_pos_emb
+                )
+                packed_sequence[packed_vae_token_indexes] = packed_latent
 
         extra_inputs = {}
         if self.use_moe:
@@ -461,9 +479,18 @@ class Bagel(PreTrainedModel):
             **extra_inputs,
         )  # (sequence_length, hidden_size)
 
-        return self.language_model.lm_head(
+        # Fast path: only need v_pred, skip lm_head entirely
+        if return_vpred_only and packed_vae_token_indexes is not None:
+            return self.llm2vae(last_hidden_state[packed_vae_token_indexes])
+
+        logits = self.language_model.lm_head(
             last_hidden_state[ce_loss_indexes]
         )  # (sequence_length(selected), vocab_size)
+
+        if return_vpred and packed_vae_token_indexes is not None:
+            v_pred = self.llm2vae(last_hidden_state[packed_vae_token_indexes])
+            return logits, v_pred
+        return logits
 
     def prepare_prompts(
         self, curr_kvlens, curr_rope, prompts, tokenizer, new_token_ids
@@ -1272,24 +1299,36 @@ class Bagel(PreTrainedModel):
             )
 
             if sde_sigma > 0:
-                # SDE mode: compute drift and sample noise
-                # drift = v_t + (sigma_t^2 / 2) * score
-                # score = (x_t + (1 - t) * v_t) / t
-                score = (x_t + (1 - t) * v_t) / t
-                drift = v_t + (sde_sigma ** 2 / 2) * score
+                # SDE mode: add stochastic noise to the ODE sampling process.
+                #
+                # v_t points data→noise (same as ODE).
+                # score_neg = -∇log p_t(x_t) = (x_t + (1-t)*v_t) / t
+                # The denoising drift (noise→data) with score correction:
+                #   effective = v_t + (σ²/2) * score_neg
+                # We SUBTRACT this (like ODE subtracts v_t) and add diffusion noise.
+                t_safe = torch.clamp(t, min=1e-6) if isinstance(t, torch.Tensor) else max(t, 1e-6)
+                score_neg = (x_t + (1 - t_safe) * v_t) / t_safe
+                drift = v_t + (sde_sigma ** 2 / 2) * score_neg
 
                 noise = torch.randn_like(x_t)
                 dt = dts[i]
-                x_next = x_t + drift * dt + sde_sigma * torch.sqrt(dt.abs()) * noise
+                x_next = x_t - drift * dt + sde_sigma * torch.sqrt(dt) * noise
 
                 # Record trajectory
                 if record_trajectory:
+                    # Gaussian transition: x_next ~ N(mu, variance)
+                    mu = x_t - drift * dt
+                    variance = sde_sigma ** 2 * dt
+                    log_prob_old = -0.5 * ((x_next - mu) ** 2 / variance).mean()
+
                     trajectory.append({
                         'x_t': x_t.detach().cpu(),
                         'x_next': x_next.detach().cpu(),
                         'noise': noise.detach().cpu(),
                         'timestep': t.item() if isinstance(t, torch.Tensor) else float(t),
                         'v_pred': v_t.detach().cpu(),
+                        'dt': dt.item() if isinstance(dt, torch.Tensor) else float(dt),
+                        'log_prob_old': log_prob_old.item(),
                     })
 
                 x_t = x_next
