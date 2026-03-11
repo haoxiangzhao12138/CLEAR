@@ -287,7 +287,7 @@ class InterleaveInferencer:
             )
 
             image = self.decode_image(unpacked_latent[0], image_shape)
-            return image, trajectory
+            return image, trajectory, unpacked_latent[0]
         else:
             # Single call: original logic (ODE or SDE depending on sde_sigma)
             unpacked_latent, trajectory = self.model.generate_image_with_trajectory(
@@ -328,7 +328,7 @@ class InterleaveInferencer:
             )
 
             image = self.decode_image(unpacked_latent[0], image_shape)
-            return image, trajectory
+            return image, trajectory, unpacked_latent[0]
 
 
     def decode_image(self, latent, image_shape):
@@ -467,7 +467,7 @@ class InterleaveInferencer:
                     gen_context = self.update_context_text(gen_text, gen_context)
                     output_list.append(gen_text)
 
-                img = self.gen_image(
+                img, _, _ = self.gen_image(
                     image_shapes,
                     gen_context,
                     cfg_text_precontext=cfg_text_context,
@@ -549,7 +549,7 @@ class InterleaveInferencer:
                 gen_context = self.update_context_text(gen_text, gen_context)
                 output_list.append(gen_text)
 
-            img = self.gen_image(
+            img, _, _ = self.gen_image(
                 image_shapes,
                 gen_context,
                 cfg_text_precontext=cfg_text_context,
@@ -679,7 +679,7 @@ class InterleaveInferencer:
                     )
                     
                     # 3. 调用图像生成（恢复）工具
-                    img, trajectory = self.gen_image(
+                    img, trajectory, raw_latent = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
                         cfg_text_precontext=cfg_text_context,
@@ -697,6 +697,11 @@ class InterleaveInferencer:
                     )
 
                     # 4. 反馈结果
+                    # 插入 raw latent（用于 latent_quality_reward），在 Image 之前
+                    output_list.append({
+                        "type": "generated_latent",
+                        "latent": raw_latent.detach().cpu(),
+                    })
                     output_list.append(pil_img2rgb(img))
 
                     # Collect trajectory if requested

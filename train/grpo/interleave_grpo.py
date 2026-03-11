@@ -66,9 +66,9 @@ class GRPOScriptArguments(ScriptArguments):
     """
 
     reward_funcs: list[str] = field(
-        default_factory=lambda: ["accuracy", "format", "image_similarity"],
+        default_factory=lambda: ["accuracy", "format", "decision", "latent_quality"],
         metadata={
-            "help": "List of reward functions. Possible values: 'accuracy', 'format', 'image_similarity'"
+            "help": "List of reward functions. Possible values: 'accuracy', 'format', 'decision', 'latent_quality'"
         },
     )
     jsonl_path: str = field(
@@ -163,13 +163,13 @@ class ModelArguments:
         default="",
         metadata={"help": "Root directory containing the clean/reference images."},
     )
-    image_similarity_method: str = field(
-        default="vit",
-        metadata={"help": "Method to compute image similarity: 'vit' or 'vae'."},
+    mse_scale: float = field(
+        default=0.5,
+        metadata={"help": "Scale factor for MSE-to-reward exponential mapping in latent_quality_reward."},
     )
-    image_similarity_weight: float = field(
-        default=0.1,
-        metadata={"help": "Weight for image similarity reward."},
+    latent_reward_mode: str = field(
+        default="both",
+        metadata={"help": "Feature mode for latent_quality_reward: 'vae', 'vit', or 'both'."},
     )
 
 
@@ -203,7 +203,7 @@ class GRPOTrainingArguments(GRPOConfig):
     freeze_vae: bool = field(
         default=True,
         metadata={
-            "help": "Keep VAE weights fixed; only predict latents, don’t fine-tune encoder/decoder."
+            "help": "Keep VAE weights fixed; only predict latents, don't fine-tune encoder/decoder."
         },
     )
     freeze_und: bool = field(
@@ -269,8 +269,96 @@ class GRPOTrainingArguments(GRPOConfig):
     )
 
 
-# ============ 图像相似度 Reward ============
+# ============ Reward 组件 ============
 _image_reward_components = {}
+# accuracy 结果缓存，供 decision_reward_auto 复用（避免重复调 LLM API）
+_accuracy_cache = {"results": None}
+
+
+def format_reward_v2(completions, **kwargs):
+    """
+    分级格式奖励（纯格式结构，不评判是否调用工具）：
+    - 0.35: 有完整的 <think>...</think>
+    - 0.35: 有完整的 <answer>...</answer>
+    - 0.3:  think 在 answer 之前（结构正确）
+    总分 [0.0, 1.0]
+    """
+    rewards = []
+    for completion in completions:
+        parts = completion[3:]  # 跳过 prompt 部分（前3个元素是 system_prompt, image, question）
+        # 把所有文本段拼接
+        text = " ".join(x for x in parts if isinstance(x, str))
+        score = 0.0
+
+        # (1) 有完整的 think 标签
+        if re.search(r'<think>.+?</think>', text, re.DOTALL):
+            score += 0.35
+
+        # (2) 有完整的 answer 标签
+        if re.search(r'<answer>.+?</answer>', text, re.DOTALL):
+            score += 0.35
+
+        # (3) think 在 answer 之前（结构完整性）
+        think_end = text.find('</think>')
+        answer_start = text.find('<answer>')
+        if think_end > 0 and answer_start > think_end:
+            score += 0.3
+
+        rewards.append(score)
+    return rewards
+
+
+
+def _extract_answer_text(completion) -> str:
+    """从 completion 列表中提取 <answer>...</answer> 中的文本"""
+    if not completion:
+        return ""
+    last_text = completion[-1] if isinstance(completion[-1], str) else ""
+    match = re.search(r'<answer>([\s\S]*?)</answer>', last_text)
+    if match:
+        return match.group(1).strip()
+    return last_text.strip()
+
+
+def decision_reward_auto(completions, solution, question, **kwargs):
+    """
+    基于结果回溯的策略决策奖励（无需难度标签）。
+    复用 accuracy_reward_v2 缓存的 LLM judge 结果来判断是否答对。
+
+    逻辑矩阵：
+    | 是否恢复 | 是否答对 | 奖励 | 原因 |
+    |----------|----------|------|------|
+    | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
+    | 没恢复   | 答对了   | 0.8  | 效率高，直接答对 |
+    | 恢复了   | 没答对   | 0.1  | 微弱鼓励尝试，避免训练早期完全回避生成 |
+    | 没恢复   | 没答对   | 0.0  | 最差 |
+
+    注意：reward_funcs 列表中 accuracy 必须排在 decision 前面，
+    这样 _accuracy_cache 在本函数执行时已有数据。
+    """
+    # 读取 accuracy_reward_v2 缓存的结果
+    acc_results = _accuracy_cache.get("results")
+    if acc_results is None:
+        # 如果 accuracy 没在前面跑过（不应该发生），fallback 调 LLM
+        acc_results = _call_llm_judge(completions, solution, question)
+
+    rewards = []
+    for idx, completion in enumerate(completions):
+        parts = completion[3:]  # 跳过 prompt
+        text_content = " ".join(x for x in parts if isinstance(x, str))
+        did_restore = "<image_restore>" in text_content
+        correct = acc_results[idx] > 0.5
+
+        if did_restore and correct:
+            rewards.append(1.0)
+        elif not did_restore and correct:
+            rewards.append(0.8)
+        elif did_restore and not correct:
+            rewards.append(0.1)
+        else:
+            rewards.append(0.0)
+
+    return rewards
 
 
 def _extract_vit_features(image, vit_model, vit_transform, patch_size,
@@ -292,164 +380,165 @@ def _extract_vit_features(image, vit_model, vit_transform, patch_size,
     return features.mean(dim=0, keepdim=True)  # (1, hidden)
 
 
-def _compute_vae_similarity(gen_img, clean_img, vae_model, vae_transform, device):
-    """VAE latent 空间 MSE → [0,1] reward。"""
-    gen_tensor = vae_transform(gen_img).unsqueeze(0).to(device)
-    clean_tensor = vae_transform(clean_img).unsqueeze(0).to(device)
-    gen_latent = vae_model.encode(gen_tensor)
-    clean_latent = vae_model.encode(clean_tensor)
-    mse = torch.nn.functional.mse_loss(gen_latent, clean_latent).item()
-    return math.exp(-mse * 0.1)
-
-
-def image_similarity_reward(completions, image_name, **kwargs):
+def latent_quality_reward(completions, image_name, **kwargs):
     """
-    比较生成图像与 clean 参考图像的相似度。
-    没有生成图像的样本返回 NaN（不参与该 reward 的聚合）。
+    生成图像质量 reward，支持三种模式（由 latent_reward_mode 控制）：
+    - "vae":  VAE latent 空间三指标（r_mse + r_cos + r_local）
+    - "vit":  ViT 语义特征 cosine 相似度（r_vit）
+    - "both": 四指标综合（r_mse + r_cos + r_local + r_vit）
+
+    没有生成图像的样本返回 NaN（不参与该 reward 聚合）。
     """
+    import torch.nn.functional as F
+
     comp = _image_reward_components
     if not comp:
         return [float('nan')] * len(completions)
 
+    mode = comp.get("mode", "vae")
     clean_root = comp["clean_image_root"]
-    method = comp["method"]
     device = comp["device"]
 
-    reward_list = []
+    # VAE 相关组件
+    need_vae = mode in ("vae", "both")
+    if need_vae:
+        vae_model = comp["vae_model"]
+        vae_transform = comp["vae_transform"]
+        latent_patch_size = comp["latent_patch_size"]
+        latent_channel = comp["latent_channel"]
+        mse_scale = comp.get("mse_scale", 0.5)
+
+    # ViT 相关组件
+    need_vit = mode in ("vit", "both")
+    if need_vit:
+        vit_model = comp["vit_model"]
+        vit_transform = comp["vit_transform"]
+        vit_patch_size = comp["vit_patch_size"]
+        vit_max_patches = comp["vit_max_patches"]
+        get_position_ids_fn = comp["get_position_ids_fn"]
+
+    rewards = []
     for idx, completion in enumerate(completions):
-        # 1. 提取生成图像（取最后一张）
+        # ---- 1. 从 completion 中提取生成的 latent 和 Image ----
+        gen_latent = None
         gen_image = None
-        for item in reversed(completion):
-            if isinstance(item, Image.Image):
+        for item in completion:
+            if isinstance(item, dict) and item.get("type") == "generated_latent":
+                gen_latent = item["latent"]
+            elif isinstance(item, Image.Image) and gen_latent is not None:
+                # 取紧跟 latent dict 之后的第一张 Image（即生成图）
                 gen_image = item
                 break
-        if gen_image is None:
-            reward_list.append(float('nan'))
-            continue
 
-        # 2. 加载 clean 图像（用原始文件名直接匹配）
+        # vit 模式只需要 Image；vae/both 模式需要 latent
+        if need_vae and gen_latent is None:
+            rewards.append(float('nan'))
+            continue
+        if need_vit and gen_image is None:
+            # 如果 vit 模式没有 Image，但 vae 模式有 latent，也尝试继续
+            if not need_vae:
+                rewards.append(float('nan'))
+                continue
+
+        # ---- 2. 加载清晰参考图像 ----
         fname = image_name[idx]
         clean_path = os.path.join(clean_root, fname)
         if not os.path.exists(clean_path):
-            # 尝试去掉后缀再匹配
             base = os.path.splitext(fname)[0]
             clean_path = None
-            for ext in [".png", ".jpg", ".jpeg"]:
+            for ext in [".png", ".jpg", ".jpeg", ".webp"]:
                 candidate = os.path.join(clean_root, base + ext)
                 if os.path.exists(candidate):
                     clean_path = candidate
                     break
         if clean_path is None or not os.path.exists(clean_path):
-            print(f"[image_similarity_reward] clean image not found for {fname}")
-            reward_list.append(float('nan'))
+            print(f"[latent_quality_reward] clean image not found: {fname}")
+            rewards.append(float('nan'))
             continue
-        clean_image = Image.open(clean_path).convert("RGB")
 
-        # 3. 计算相似度
         try:
+            clean_image = Image.open(clean_path).convert("RGB")
+
             with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                if method == "vit":
+                # ---- 3a. VAE latent 子指标 ----
+                r_mse = r_cos = r_local = 0.0
+                if need_vae and gen_latent is not None:
+                    clean_tensor = vae_transform(clean_image).unsqueeze(0).to(device)
+                    clean_latent_raw = vae_model.encode(clean_tensor)  # (1, C, H, W)
+
+                    p = latent_patch_size
+                    c = latent_channel
+                    _, _, h_lat, w_lat = clean_latent_raw.shape
+                    h_patch = h_lat // p
+                    w_patch = w_lat // p
+                    clean_lat = clean_latent_raw[0, :, :h_patch * p, :w_patch * p]
+                    clean_lat = clean_lat.reshape(c, h_patch, p, w_patch, p)
+                    clean_lat = torch.einsum("chpwq->hwpqc", clean_lat)
+                    clean_latent_flat = clean_lat.reshape(-1, p * p * c)
+
+                    gen_latent_flat = gen_latent.to(device)
+                    n_tokens = min(gen_latent_flat.shape[0], clean_latent_flat.shape[0])
+                    gen_latent_flat = gen_latent_flat[:n_tokens]
+                    clean_latent_flat = clean_latent_flat[:n_tokens]
+
+                    mse_val = F.mse_loss(gen_latent_flat, clean_latent_flat).item()
+                    r_mse = math.exp(-mse_val * mse_scale)
+
+                    cos_sim = F.cosine_similarity(
+                        gen_latent_flat.reshape(1, -1),
+                        clean_latent_flat.reshape(1, -1),
+                        dim=-1
+                    ).item()
+                    r_cos = max(cos_sim, 0.0)
+
+                    per_token_cos = F.cosine_similarity(
+                        gen_latent_flat, clean_latent_flat, dim=-1
+                    )
+                    r_local = per_token_cos.clamp(min=0).mean().item()
+
+                # ---- 3b. ViT 语义子指标 ----
+                r_vit = 0.0
+                if need_vit and gen_image is not None:
                     gen_feat = _extract_vit_features(
-                        gen_image, comp["vit_model"], comp["vit_transform"],
-                        comp["vit_patch_size"], comp["get_position_ids_fn"],
-                        comp["vit_max_patches"], device,
+                        gen_image, vit_model, vit_transform,
+                        vit_patch_size, get_position_ids_fn,
+                        vit_max_patches, device,
                     )
                     clean_feat = _extract_vit_features(
-                        clean_image, comp["vit_model"], comp["vit_transform"],
-                        comp["vit_patch_size"], comp["get_position_ids_fn"],
-                        comp["vit_max_patches"], device,
+                        clean_image, vit_model, vit_transform,
+                        vit_patch_size, get_position_ids_fn,
+                        vit_max_patches, device,
                     )
-                    sim = torch.nn.functional.cosine_similarity(
-                        gen_feat, clean_feat, dim=-1
-                    ).item()
-                    sim = max(sim, 0.0)
-                else:  # vae
-                    sim = _compute_vae_similarity(
-                        gen_image, clean_image,
-                        comp["vae_model"], comp["vae_transform"], device,
-                    )
+                    sim = F.cosine_similarity(gen_feat, clean_feat, dim=-1).item()
+                    r_vit = max(sim, 0.0)
+
+            # ---- 4. 按模式综合得分 ----
+            if mode == "vae":
+                score = 0.3 * r_mse + 0.3 * r_cos + 0.4 * r_local
+            elif mode == "vit":
+                score = r_vit
+            else:  # both
+                score = 0.2 * r_mse + 0.2 * r_cos + 0.3 * r_local + 0.3 * r_vit
+
         except Exception as e:
-            print(f"[image_similarity_reward] error for {image_name}: {e}")
-            sim = 0.0
+            print(f"[latent_quality_reward] error for {fname}: {e}")
+            score = 0.0
 
-        reward_list.append(float(sim))
+        rewards.append(float(score))
 
-    return reward_list
+    return rewards
 
 
-def format_reward(completions, **kwargs):
+def _call_llm_judge(completions, solutions, questions):
     """
-    检查格式：
-    1. 必须有 <think>...</think>
-    2. 必须以 <answer>...</answer> 结尾
-    3. 中间可以包含 <image_restore> (单token)
+    调用 LLM 判断答案正确性。
+    从原 accuracy_reward_with_llm 中提取的核心逻辑。
     """
-    # 结尾必须是 answer
-    result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
-    
-    # [修改]: 只要包含 <image_restore> 这个字符串即可，不需要闭合标签
-    restore_token = "<image_restore>" 
-
-    reward_list = []
-    for i in range(len(completions)):
-        match_flag = True
-        # completions[i] 是一个混合列表 [Text, Image, Text...]
-        # 假设前3个元素是 prompt 部分，这里切片取生成的回复
-        current_completion = completions[i][3:] 
-        
-        for j in range(len(current_completion)):
-            item = current_completion[j]
-            # 如果是文本段
-            if isinstance(item, str):
-                s = item.strip()
-                
-                # 如果是最后一段，必须匹配 answer 结构
-                if j == len(current_completion) - 1:
-                    match = re.fullmatch(result_pattern, s, re.DOTALL)
-                else:
-                    # 中间段落：要么是 answer (如果它提前结束了)，要么包含 restore token
-                    # 这里放宽逻辑：只要不是最后一段，我们允许它是思维链的一部分或者包含 restore token
-                    # 关键是看是否包含我们不想要的乱码。
-                    # 简单起见，如果包含 <image_restore> 就算符合工具调用格式
-                    if restore_token in s:
-                        match = True
-                    # 或者它是纯思维链的一部分 (通过 think 正则判断，或者由后续 answer 保证)
-                    # 这里我们主要确保它不破坏整体结构。
-                    # 为简单起见，如果不是最后一段，我们通常默认它是合法的（除非有严格的中间格式要求）
-                    else:
-                        match = True 
-                
-                if not match:
-                    match_flag = False
-                    break
-        
-        reward_list.append(1.0 if match_flag else 0.0)
-    return reward_list
-
-
-def accuracy_reward_with_llm(completions, solution, question, **kwargs):
-    """
-    并行处理多个 prompt 请求，返回布尔结果列表
-
-    Args:
-        system_prompt: 系统指令
-        base_url: 模型服务地址
-        api_key: API 认证密钥
-        prompts: 需要处理的 prompt 列表
-        model: 模型名称（必需参数，即使自托管服务也需要占位值）
-        max_retries: 最大重试次数
-        timeout: 单次请求超时时间(秒)
-        max_workers: 最大并发线程数
-
-    Returns:
-        list[bool]: 每个 prompt 的处理结果（True/False）
-    """
-    # set your judeger url and api key
     base_url = "http://yy.dbh.baidu-int.com"
     api_key = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.
-    Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here’s how you can accomplish the task:
+    Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here's how you can accomplish the task:
     INSTRUCTIONS:
     - Focus on the meaningful match between the predicted answer and the correct answer.
     - Consider synonyms or paraphrases as valid matches.
@@ -460,16 +549,20 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
     1. **Question Related to the Image**: {Question}
     2. **Ground Truth Answer**: {Ground_Truth}
     3. **Model Predicted Answer**: {Prediction}
-    Your task is to evaluate the model’s predicted answer against the ground truth answer, based on the context provided by the question related to the image. Consider the following criteria for evaluation:
+    Your task is to evaluate the model's predicted answer against the ground truth answer, based on the context provided by the question related to the image. Consider the following criteria for evaluation:
     - **Relevance**: Does the predicted answer directly address the question posed, considering the information provided by the given question?
     - **Accuracy**: Compare the predicted answer to the ground truth answer. You need to evaluate from the following two perspectives:
     (1) If the ground truth answer is open-ended, consider whether the prediction accurately reflects the information given in the ground truth without introducing factual inaccuracies. If it does, the prediction should be considered correct.
-    (2) If the ground truth answer is a definitive answer, strictly compare the model’s prediction to the actual answer. Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model’s prediction should be deemed correct.
+    (2) If the ground truth answer is a definitive answer, strictly compare the model's prediction to the actual answer. Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's prediction should be deemed correct.
 
     **Output Format**:
-    Your response should only include True or False indicating the correctness of the prediction: True for correct and False for incorrect. Note that True means the model’s prediction strictly aligns with the ground truth, while False means it does not.
+    Your response should only include True or False indicating the correctness of the prediction: True for correct and False for incorrect. Note that True means the model's prediction strictly aligns with the ground truth, while False means it does not.
     The format should be flagged: True or False
     """
+    max_retries = 3
+    timeout = 30
+    max_workers = 64
+    model = "gpt-4.1"
 
     def process_single(prompt: str) -> bool:
         client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
@@ -477,88 +570,78 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-
         for attempt in range(max_retries):
             try:
                 response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=512,
-                    temperature=0.0,  # 确保输出确定性
-                    n=1,
+                    model=model, messages=messages, max_tokens=512, temperature=0.0, n=1,
                 )
-
-                # 解析模型响应
                 content = response.choices[0].message.content.strip().lower()
                 if content == "true":
                     return True
                 elif content == "false":
                     return False
-
             except (APIConnectionError, RateLimitError, APIStatusError) as e:
                 print(f"Error: {e}")
-                # 可重试的错误类型
                 if attempt == max_retries - 1:
                     return False
-                time.sleep(2**attempt)  # 指数退避
+                time.sleep(2 ** attempt)
             except Exception as e:
                 print(f"Error: {e}")
-                # 其他不可恢复错误
                 if attempt == max_retries - 1:
                     return False
-
         return False
 
-    # 并行处理所有请求
-    max_retries = 3
-    timeout = 30
-    max_workers = 64
-    # model = "qwen3-30b-a3b-instruct-2507"
-    model = "gpt-4.1"
     prompts = []
-    continue_list = []
+    skip_indices = set()
     answer_list = []
-    for idx, completion_list in enumerate(completions):
-        if type(completion_list[-1]) is not str:
+    for idx, comp in enumerate(completions):
+        pred = _extract_answer_text(comp)
+        if not pred:
             answer_list.append("-")
-            continue_list.append(idx)
-            continue
-        content = completion_list[-1].strip()
-        content_match = re.search(r"<answer>([\s\S]*?)</answer>", content)
-        student_answer = content_match.group(1).strip() if content_match else content
-        answer_list.append(student_answer)
+            skip_indices.add(idx)
+        else:
+            answer_list.append(pred)
 
     for i in range(len(answer_list)):
-        prompt = user_prompt_template.format(
-            Question=question[i],
-            Ground_Truth=solution[i],
+        prompts.append(user_prompt_template.format(
+            Question=questions[i],
+            Ground_Truth=solutions[i],
             Prediction=answer_list[i],
-        )
-        prompts.append(prompt)
-    results = [False] * len(prompts)
+        ))
+
+    results = [0.0] * len(prompts)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
             executor.submit(process_single, prompt): idx
             for idx, prompt in enumerate(prompts)
-            if idx not in continue_list
+            if idx not in skip_indices
         }
-
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             try:
-                results[idx] = future.result()
+                results[idx] = 1.0 if future.result() else 0.0
             except Exception:
-                results[idx] = False
-    results_float = [1.0 if r else 0.0 for r in results]
+                results[idx] = 0.0
 
-    return results_float
+    return results
 
+
+def accuracy_reward_v2(completions, solution, question, **kwargs):
+    """
+    答案正确性奖励。
+    全量调用 LLM judge 判断，结果缓存到 _accuracy_cache 供 decision_reward_auto 复用。
+    """
+    rewards = _call_llm_judge(completions, solution, question)
+    # 缓存结果，decision_reward_auto 按顺序在后面执行时直接读取
+    _accuracy_cache["results"] = rewards
+    return rewards
 
 
 reward_funcs_registry = {
-    "accuracy": accuracy_reward_with_llm,
-    "format": format_reward,
-    "image_similarity": image_similarity_reward,
+    "accuracy": accuracy_reward_v2,
+    "format": format_reward_v2,
+    "decision": decision_reward_auto,
+    "latent_quality": latent_quality_reward,
 }
 
 
@@ -665,14 +748,19 @@ def main(grpo_args, training_args, model_args):
         use_flex=training_args.use_flex,
     )
 
-    # ---- 初始化图像 reward 组件 ----
-    if "image_similarity" in grpo_args.reward_funcs:
+    # ---- 初始化 reward 组件 ----
+    if "latent_quality" in grpo_args.reward_funcs:
         _image_reward_components.update({
             "clean_image_root": model_args.clean_image_root,
-            "method": model_args.image_similarity_method,
             "device": "cuda",
+            "mode": model_args.latent_reward_mode,
+            # VAE 组件
             "vae_model": vae_model,
             "vae_transform": vae_transform,
+            "latent_patch_size": model_args.latent_patch_size,
+            "latent_channel": vae_config.z_channels,
+            "mse_scale": model_args.mse_scale,
+            # ViT 组件
             "vit_model": model.vit_model,
             "vit_transform": vit_transform,
             "vit_patch_size": model_args.vit_patch_size,
@@ -702,6 +790,16 @@ def main(grpo_args, training_args, model_args):
         eval_dataset=None,
         # output_record_file=f"./sample_output/{training_args.run_name}.txt",
     )
+
+    # 设置 reward 权重：accuracy=0.45, format=0.15, decision=0.15, latent_quality=0.25
+    weight_map = {
+        "accuracy": 0.45,
+        "format": 0.15,
+        "decision": 0.15,
+        "latent_quality": 0.25,
+    }
+    reward_weights = [weight_map[name] for name in grpo_args.reward_funcs]
+    trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)
 
     # Train and push the model to the Hub
     trainer.train()

@@ -69,12 +69,15 @@ def save_list_with_images(
     # 若未显式传入 answer，则尝试从文本中抽取
     answer_pred = ""
     ans_pat = re.compile(r"<answer>(.*?)</answer>", flags=re.DOTALL)
-    if ans_pat.search(input_list[-1]):
-        answer_pred = ans_pat.search(input_list[-1]).group(1)
+    last_text = input_list[-1] if isinstance(input_list[-1], str) else ""
+    if isinstance(last_text, str) and ans_pat.search(last_text):
+        answer_pred = ans_pat.search(last_text).group(1)
 
     raw_image.save(os.path.join(folder_path, "raw_image.png"), "PNG")
     for item in input_list:
-        if isinstance(item, Image.Image):
+        if isinstance(item, dict):
+            continue  # 跳过 latent dict，它只用于 reward 计算
+        elif isinstance(item, Image.Image):
             # 生成文件名（包含步数前缀）
             if step is not None:
                 filename = f"{image_counter}.png"
@@ -610,12 +613,13 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 在多 GPU/多进程设置中，收集所有进程的奖励分数
         rewards_per_func = gather(rewards_per_func)
         # Apply weights to each reward function's output and sum
-        # 应用每个奖励函数的权重，并对它们求和得到最终奖励
-        rewards = (
-            rewards_per_func * self.reward_weights.to(device).unsqueeze(0)
-        ).nansum(
-            dim=1
-        )  # nansum 忽略 NaN 值求和
+        # 按实际参与的 reward 权重归一化，避免 NaN 导致的不公平
+        # （没生图的样本 latent_quality 为 NaN，如果直接 nansum 会导致其 reward 上限低于有生图的样本）
+        weights = self.reward_weights.to(device).unsqueeze(0)           # (1, num_funcs)
+        weighted = rewards_per_func * weights                           # (N, num_funcs)
+        valid_mask = ~torch.isnan(rewards_per_func)                     # (N, num_funcs)
+        weight_sum = (valid_mask.float() * weights).sum(dim=1)          # (N,)
+        rewards = weighted.nan_to_num(0.0).sum(dim=1) / weight_sum.clamp(min=1e-8)  # (N,)
 
         # Compute grouped-wise rewards (按组计算均值和标准差)
         # 将奖励重塑为 (num_unique_prompts, num_generations_per_prompt)

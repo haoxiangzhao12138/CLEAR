@@ -49,6 +49,8 @@ class OutputTransfer:
     def __call__(self, output_list, device, id_list):
         sequence_status_list = []
         for i, output in enumerate(output_list):
+            # 过滤掉 latent dict 元素（仅用于 reward 计算，不参与 tokenization）
+            output = [item for item in output if not isinstance(item, dict)]
             self.format_check(output)
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
 

@@ -22,8 +22,9 @@ torchrun \
     --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
     --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
     --clean_image_root /root/CLEAR/datasets/processed_dataset/rl/images/ \
-    --image_similarity_method vit \
-    --reward_funcs accuracy format image_similarity \
+    --mse_scale 0.5 \
+    --latent_reward_mode vae \
+    --reward_funcs accuracy format decision latent_quality \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
@@ -37,17 +38,17 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 16 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
-    --max_steps 100 \
+    --max_steps 400 \
     --run_name $WANDB_RUN_NAME \
-    --save_steps 5 \
+    --save_steps 10\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0002000 \
+    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \
