@@ -38,7 +38,7 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 16 \
+    --gradient_accumulation_steps 1 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
