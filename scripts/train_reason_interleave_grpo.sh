@@ -29,11 +29,11 @@ torchrun \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
-    --learning_rate 3e-6 \
+    --learning_rate 1e-6 \
     --lr_scheduler_type cosine \
-    --num_iterations 1 \
+    --num_iterations 2 \
     --num_generations 8 \
-    --beta 0.0 \
+    --beta 0.04 \
     --num_timesteps 50 \
     --mask_truncated_completions false \
     --use_liger_kernel false \

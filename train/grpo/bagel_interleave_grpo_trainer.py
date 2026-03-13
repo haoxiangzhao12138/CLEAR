@@ -526,31 +526,20 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
         # --- 计算 Log Probabilities (for KL divergence or ratio) ---
         # 禁用梯度计算，因为我们只关心 log probabilities
+        #
+        # 当 num_iterations > 1 时需要 old_per_token_logps 用于重要性采样比率（PPO clip）;
+        # 当 beta > 0 时需要 ref_per_token_logps 用于 KL 惩罚。
+        # 两者都可以用当前模型（更新前）的 logps，只需计算一次。
         with torch.no_grad():
-            # 当使用 num_iterations == 1 时，old_per_token_logps 等于当前的 per_token_logps
-            if self.num_iterations > 1:
-                # 计算旧的（上一次迭代的）每个 token 的对数概率
+            need_logps = self.num_iterations > 1 or self.beta != 0.0
+            if need_logps:
                 old_per_token_logps = self._get_per_token_logps(
                     self.model, input_dict_list
                 )
             else:
-                # 如果只迭代一次，则不需要旧的 logps
                 old_per_token_logps = None
-            # 如果 beta 为 0，不需要参考模型的 logps
-            if self.beta == 0.0:
-                ref_per_token_logps = None
-            # 如果有单独的参考模型
-            elif self.ref_model is not None:
-                # 计算参考模型的每个 token 的对数概率
-                ref_per_token_logps = self._get_per_token_logps(
-                    self.ref_model, input_dict_list
-                )
-            else:
-                # 否则，在当前模型上禁用 adapter（如 LoRA）来模拟参考模型
-                with self.accelerator.unwrap_model(self.model).disable_adapter():
-                    ref_per_token_logps = self._get_per_token_logps(
-                        self.ref_model, input_dict_list
-                    )
+            # KL 约束：用生成时刻的模型 logps 作为参考（无需额外 ref_model，零显存开销）
+            ref_per_token_logps = old_per_token_logps if self.beta != 0.0 else None
 
         start_time = time.time()
         # --- 计算奖励 (Compute Rewards) ---
@@ -995,9 +984,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             per_token_kl = per_token_kl * mask
 
         # PPO-clip loss
+        # num_iterations > 1: 用生成时刻缓存的 logps（模型已更新，ratio ≠ 1）
+        # num_iterations == 1: 用当前 forward 的 detach（ratio = 1，梯度仍通过 per_token_logps 流动）
         old_per_token_logps = (
             inputs["old_per_token_logps"][0]
-            if self.num_iterations > 1
+            if inputs["old_per_token_logps"] is not None
             else per_token_logps.detach()
         )
         coef_1 = torch.exp(per_token_logps - old_per_token_logps)

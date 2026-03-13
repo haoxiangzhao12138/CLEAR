@@ -456,7 +456,7 @@ class GRPOConfig(TrainingArguments):
         },
     )
     loss_type: str = field(
-        default="bnpo",
+        default="dr_grpo",
         metadata={
             "help": "Specifies the loss formulation to use. Supported values are `grpo`, `bnpo`, and `dr_grpo`. "
             "`'grpo'`: Aggregates token-level losses by normalizing over sequence length. Not recommended due to "
