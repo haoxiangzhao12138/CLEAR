@@ -25,15 +25,19 @@ torchrun \
     --mse_scale 0.5 \
     --latent_reward_mode vae \
     --reward_funcs accuracy format decision latent_quality \
+    --enable_reward_accuracy True \
+    --enable_reward_format True \
+    --enable_reward_decision True \
+    --enable_reward_latent_quality True \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
-    --learning_rate 3e-6 \
+    --learning_rate 1e-6 \
     --lr_scheduler_type cosine \
-    --num_iterations 1 \
+    --num_iterations 2 \
     --num_generations 8 \
-    --beta 0.0 \
+    --beta 0.04 \
     --num_timesteps 50 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
@@ -53,6 +57,7 @@ torchrun \
     --max_latent_size 64 \
     --use_flex False \
     --max_num_tokens 16384 \
+    --use_text_grpo True \
     --use_flow_grpo True \
     --sde_sigma 1.0 \
     --num_timesteps_train 10 \
