@@ -71,6 +71,22 @@ class GRPOScriptArguments(ScriptArguments):
             "help": "List of reward functions. Possible values: 'accuracy', 'format', 'decision', 'latent_quality'"
         },
     )
+    enable_reward_accuracy: bool = field(
+        default=True,
+        metadata={"help": "Enable the accuracy reward function."},
+    )
+    enable_reward_format: bool = field(
+        default=True,
+        metadata={"help": "Enable the format reward function."},
+    )
+    enable_reward_decision: bool = field(
+        default=True,
+        metadata={"help": "Enable the decision reward function."},
+    )
+    enable_reward_latent_quality: bool = field(
+        default=True,
+        metadata={"help": "Enable the latent_quality reward function."},
+    )
     jsonl_path: str = field(
         default="",
         metadata={"help": "Path to the JSONL file containing the dataset."},
@@ -247,6 +263,10 @@ class GRPOTrainingArguments(GRPOConfig):
         },
     )
     # --- Flow-GRPO parameters ---
+    use_text_grpo: bool = field(
+        default=True,
+        metadata={"help": "Enable text GRPO (PPO-clip) loss. Set False to zero out text loss."},
+    )
     use_flow_grpo: bool = field(
         default=True,
         metadata={"help": "Enable Flow-GRPO for image generation optimization."},
@@ -749,7 +769,21 @@ def main(grpo_args, training_args, model_args):
     )
 
     # ---- 初始化 reward 组件 ----
-    if "latent_quality" in grpo_args.reward_funcs:
+    # Build active reward list from switches
+    reward_switch_map = {
+        "accuracy": grpo_args.enable_reward_accuracy,
+        "format": grpo_args.enable_reward_format,
+        "decision": grpo_args.enable_reward_decision,
+        "latent_quality": grpo_args.enable_reward_latent_quality,
+    }
+    active_reward_names = [name for name in grpo_args.reward_funcs if reward_switch_map.get(name, True)]
+
+    # Log active components
+    print(f"[GRPO Config] Active rewards: {active_reward_names}")
+    print(f"[GRPO Config] use_text_grpo: {training_args.use_text_grpo}")
+    print(f"[GRPO Config] use_flow_grpo: {training_args.use_flow_grpo}")
+
+    if "latent_quality" in active_reward_names:
         _image_reward_components.update({
             "clean_image_root": model_args.clean_image_root,
             "device": "cuda",
@@ -769,7 +803,7 @@ def main(grpo_args, training_args, model_args):
         })
 
     # Get reward functions
-    reward_funcs = [reward_funcs_registry[func] for func in grpo_args.reward_funcs]
+    reward_funcs = [reward_funcs_registry[func] for func in active_reward_names]
     # Load the dataset
     train_set = GRPODataset(
         jsonl_path=grpo_args.jsonl_path, image_root=grpo_args.image_root
@@ -798,7 +832,7 @@ def main(grpo_args, training_args, model_args):
         "decision": 0.15,
         "latent_quality": 0.25,
     }
-    reward_weights = [weight_map[name] for name in grpo_args.reward_funcs]
+    reward_weights = [weight_map[name] for name in active_reward_names]
     trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)
 
     # Train and push the model to the Hub

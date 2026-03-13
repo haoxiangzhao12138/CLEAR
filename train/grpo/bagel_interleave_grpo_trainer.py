@@ -1015,6 +1015,10 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
 
+        # Gate text loss with use_text_grpo switch
+        if not self.args.use_text_grpo:
+            text_loss = torch.tensor(0.0, device=per_token_loss.device)
+
         # === Phase 4: Combine — ONE backward for both ===
         total_loss = text_loss + self.args.image_loss_weight * image_loss
 
