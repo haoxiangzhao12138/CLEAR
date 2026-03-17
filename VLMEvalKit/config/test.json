@@ -9,7 +9,9 @@
             "is_ema": false,
             "output_need_vae": true,
             "output_need_vit": false,
-            "consider_think": true
+            "consider_think": true,
+            "verbose_print": false,
+            "enable_image_gen_stats": true
         }
     },
     "data": {
