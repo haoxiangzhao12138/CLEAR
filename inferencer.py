@@ -137,6 +137,78 @@ class InterleaveInferencer:
         return gen_context
 
     @torch.no_grad()
+    def update_context_vae_from_packed_latent(
+        self,
+        packed_latent: torch.Tensor,  # Already vae2llm projected + pos_embed + timestep_embed (final format)
+        image_shape,
+        gen_context,
+    ):
+        """
+        Directly update context with already packed latent.
+        Skips vae decode+encode to avoid unnecessary VAE processing.
+        The packed_latent is already in final format: vae2llm(x_t) + timestep_embeds + pos_embed
+        """
+        past_key_values = gen_context["past_key_values"]
+        kv_lens = gen_context["kv_lens"]
+        ropes = gen_context["ropes"]
+
+        # Prepare VAE inputs using the same logic as prepare_vae_images
+        # but skip image encoding since we already have the latent
+        H, W = image_shape
+        h = H // self.model.latent_downsample
+        w = W // self.model.latent_downsample
+        num_img_tokens = h * w
+
+        # For single sample inference, kv_lens and ropes have one element each
+        curr_kvlen = kv_lens[0]
+        curr_position_id = ropes[0]
+
+        _curr = curr = 0
+        packed_key_value_indexes = list(range(curr, curr + curr_kvlen))
+        curr += curr_kvlen
+
+        # Build text tokens (start_of_image and end_of_image)
+        packed_text_ids = [self.new_token_ids["start_of_image"], self.new_token_ids["end_of_image"]]
+        packed_text_indexes = [_curr, _curr + num_img_tokens + 1]
+        packed_indexes = [curr, curr + num_img_tokens + 1]
+        curr += 1
+        _curr += 1
+
+        # Build token indexes for VAE tokens
+        packed_vae_token_indexes = list(range(_curr, _curr + num_img_tokens))
+        packed_indexes.extend(range(curr, curr + num_img_tokens))
+        curr += num_img_tokens
+        _curr += num_img_tokens
+
+        # Update kv_lens and ropes
+        new_kv_lens = [curr_kvlen + num_img_tokens + 2]
+        new_ropes = [curr_position_id + 1]
+
+        packed_position_ids = [ropes[0]] * (num_img_tokens + 2)
+        packed_seqlens = [num_img_tokens + 2]
+        key_values_lens = kv_lens
+
+        # Call the new forward method with packed latent
+        past_key_values = self.model.forward_cache_update_vae_from_packed_latent(
+            past_key_values=past_key_values,
+            packed_latent=packed_latent,
+            packed_vae_token_indexes=torch.tensor(packed_vae_token_indexes, dtype=torch.long, device=self.device),
+            packed_text_ids=torch.tensor(packed_text_ids, dtype=torch.long, device=self.device),
+            packed_text_indexes=torch.tensor(packed_text_indexes, dtype=torch.long, device=self.device),
+            packed_position_ids=torch.tensor(packed_position_ids, dtype=torch.long, device=self.device),
+            packed_seqlens=torch.tensor(packed_seqlens, dtype=torch.int, device=self.device),
+            packed_indexes=torch.tensor(packed_indexes, dtype=torch.long, device=self.device),
+            key_values_lens=torch.tensor(key_values_lens, dtype=torch.int, device=self.device),
+            packed_key_value_indexes=torch.tensor(packed_key_value_indexes, dtype=torch.long, device=self.device),
+        )
+
+        gen_context["kv_lens"] = new_kv_lens
+        gen_context["ropes"] = new_ropes
+        gen_context["past_key_values"] = past_key_values
+
+        return gen_context
+
+    @torch.no_grad()
     def gen_image(
         self,
         image_shape,
@@ -224,7 +296,7 @@ class InterleaveInferencer:
 
             # 1. ODE generation → high quality image (for decode + reward + continued reasoning)
             #    KV cache is read-only (update_past_key_values=False), not modified
-            unpacked_latent = self.model.generate_image(
+            unpacked_latent, unpacked_latent_llm = self.model.generate_image(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=cfg_text_past_key_values,
                 cfg_img_past_key_values=cfg_img_past_key_values,
@@ -261,7 +333,7 @@ class InterleaveInferencer:
 
             # 2. SDE generation → trajectory (for Flow-GRPO training)
             generation_input["packed_init_noises"] = saved_noise
-            _, trajectory = self.model.generate_image_with_trajectory(
+            _, _, trajectory = self.model.generate_image_with_trajectory(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=None,
                 cfg_img_past_key_values=None,
@@ -287,10 +359,11 @@ class InterleaveInferencer:
             )
 
             image = self.decode_image(unpacked_latent[0], image_shape)
-            return image, trajectory, unpacked_latent[0]
+            # Return both: raw_latent for decode, packed_latent for direct context update
+            return image, trajectory, unpacked_latent[0], unpacked_latent_llm[0]
         else:
             # Single call: original logic (ODE or SDE depending on sde_sigma)
-            unpacked_latent, trajectory = self.model.generate_image_with_trajectory(
+            unpacked_latent, unpacked_latent_llm, trajectory = self.model.generate_image_with_trajectory(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=cfg_text_past_key_values,
                 cfg_img_past_key_values=cfg_img_past_key_values,
@@ -328,7 +401,8 @@ class InterleaveInferencer:
             )
 
             image = self.decode_image(unpacked_latent[0], image_shape)
-            return image, trajectory, unpacked_latent[0]
+            # Return both: raw_latent for decode, packed_latent for direct context update
+            return image, trajectory, unpacked_latent[0], unpacked_latent_llm[0]
 
 
     def decode_image(self, latent, image_shape):
@@ -677,9 +751,9 @@ class InterleaveInferencer:
                     edit_cfg_img_context = self.update_context_text(
                         gen_text, edit_cfg_img_context
                     )
-                    
+
                     # 3. 调用图像生成（恢复）工具
-                    img, trajectory, raw_latent = self.gen_image(
+                    img, trajectory, raw_latent, packed_latent = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
                         cfg_text_precontext=cfg_text_context,
@@ -697,7 +771,32 @@ class InterleaveInferencer:
                     )
 
                     # 4. 反馈结果
-                    # 插入 raw latent（用于 latent_quality_reward），在 Image 之前
+                    # 先使用 packed_latent 更新上下文（避免 decode+encode），再保存到 output_list
+                    if output_need_vae or output_need_vit:
+                        # Use packed_latent (LLM format) directly for VAE context update (skip decode+encode)
+                        if output_need_vae:
+                            gen_context = self.update_context_vae_from_packed_latent(
+                                packed_latent=packed_latent,
+                                image_shape=image_shapes,
+                                gen_context=gen_context,
+                            )
+                            # Sync update CFG contexts
+                            cfg_text_context = deepcopy(gen_context)
+                            edit_cfg_img_context = deepcopy(gen_context)
+
+                        # Update ViT context (still need image for ViT encoding)
+                        if output_need_vit:
+                            img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
+                            gen_context = self.update_context_image(
+                                img_processed, gen_context, vae=False, vit=True
+                            )
+                            # Sync update CFG contexts
+                            cfg_text_context = deepcopy(gen_context)
+                            edit_cfg_img_context = self.update_context_image(
+                                img_processed, edit_cfg_img_context, vae=False, vit=True
+                            )
+
+                    # 保存 raw latent（用于 latent_quality_reward），在 Image 之前
                     output_list.append({
                         "type": "generated_latent",
                         "latent": raw_latent.detach().cpu(),
@@ -707,19 +806,6 @@ class InterleaveInferencer:
                     # Collect trajectory if requested
                     if trajectory is not None:
                         trajectories.append(trajectory)
-
-                    # 根据开关决定是否将生成的图片喂回模型 KV Cache
-                    if output_need_vae or output_need_vit:
-                        img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
-                        gen_context = self.update_context_image(
-                            img_processed, gen_context, vae=output_need_vae, vit=output_need_vit
-                        )
-
-                        # 同步更新 CFG 用的上下文
-                        cfg_text_context = deepcopy(gen_context)
-                        edit_cfg_img_context = self.update_context_image(
-                            img_processed, edit_cfg_img_context, vae=output_need_vae, vit=output_need_vit
-                        )
                 else:
                     break
 

@@ -37,6 +37,9 @@ import torch
 from PIL import Image
 from data.data_utils import patchify
 
+# Global variable for decision reward smooth setting
+_decision_reward_smooth = True
+
 # import debugpy
 # try:
 #     # 5678 is the default attach port in the VS Code debug configurations. Unless a host and port are specified, host defaults to 127.0.0.1
@@ -276,15 +279,36 @@ class GRPOTrainingArguments(GRPOConfig):
         metadata={"help": "Sigma for SDE-based sampling during training."},
     )
     num_timesteps_train: int = field(
-        default=10,
+        default=30,  # 改为 30，与 num_timesteps 接近
         metadata={
             "help": "Number of timesteps for image generation during training (Denoising Reduction)."
         },
     )
     image_loss_weight: float = field(
-        default=0.1,
+        default=0.3,  # 改为 0.3，增加图像权重
         metadata={
             "help": "Weight for image GRPO loss in total loss computation."
+        },
+    )
+    trajectory_selection_strategy: str = field(
+        default="round_robin",
+        metadata={
+            "help": "Strategy for selecting trajectory step in Flow-GRPO: 'random', 'round_robin', or 'weighted'. "
+                  "round_robin ensures each step is trained equally; weighted favors middle steps."
+        },
+    )
+    separate_image_rewards: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, compute separate advantages for image generation using only latent_quality reward. "
+                  "This can provide more precise gradient signals for image optimization."
+        },
+    )
+    decision_reward_smooth: bool = field(
+        default=True,
+        metadata={
+            "help": "If True, use smoother decision reward values (1.0, 0.9, 0.5, 0.0) instead of "
+                  "original extreme values (1.0, 0.8, 0.1, 0.0)."
         },
     )
 
@@ -345,7 +369,7 @@ def decision_reward_auto(completions, solution, question, **kwargs):
     基于结果回溯的策略决策奖励（无需难度标签）。
     复用 accuracy_reward_v2 缓存的 LLM judge 结果来判断是否答对。
 
-    逻辑矩阵：
+    逻辑矩阵（原始值）：
     | 是否恢复 | 是否答对 | 奖励 | 原因 |
     |----------|----------|------|------|
     | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
@@ -353,9 +377,20 @@ def decision_reward_auto(completions, solution, question, **kwargs):
     | 恢复了   | 没答对   | 0.1  | 微弱鼓励尝试，避免训练早期完全回避生成 |
     | 没恢复   | 没答对   | 0.0  | 最差 |
 
+    逻辑矩阵（平滑值，_decision_reward_smooth=True）：
+    | 是否恢复 | 是否答对 | 奖励 | 原因 |
+    |----------|----------|------|------|
+    | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
+    | 没恢复   | 答对了   | 0.9  | 高质量：无需工具也能答对 |
+    | 恢复了   | 没答对   | 0.5  | 中等：尝试了但没答对，值得鼓励 |
+    | 没恢复   | 没答对   | 0.0  | 最差 |
+
     注意：reward_funcs 列表中 accuracy 必须排在 decision 前面，
     这样 _accuracy_cache 在本函数执行时已有数据。
     """
+    # 使用全局变量 decision_reward_smooth
+    use_smooth = _decision_reward_smooth
+
     # 读取 accuracy_reward_v2 缓存的结果
     acc_results = _accuracy_cache.get("results")
     if acc_results is None:
@@ -369,14 +404,26 @@ def decision_reward_auto(completions, solution, question, **kwargs):
         did_restore = "<image_restore>" in text_content
         correct = acc_results[idx] > 0.5
 
-        if did_restore and correct:
-            rewards.append(1.0)
-        elif not did_restore and correct:
-            rewards.append(0.8)
-        elif did_restore and not correct:
-            rewards.append(0.1)
+        if use_smooth:
+            # 平滑奖励曲线
+            if did_restore and correct:
+                rewards.append(1.0)      # 最优
+            elif not did_restore and correct:
+                rewards.append(0.9)      # 高质量
+            elif did_restore and not correct:
+                rewards.append(0.5)      # 中等，值得鼓励
+            else:
+                rewards.append(0.0)      # 最差
         else:
-            rewards.append(0.0)
+            # 原始奖励曲线
+            if did_restore and correct:
+                rewards.append(1.0)
+            elif not did_restore and correct:
+                rewards.append(0.8)
+            elif did_restore and not correct:
+                rewards.append(0.1)
+            else:
+                rewards.append(0.0)
 
     return rewards
 
@@ -778,11 +825,6 @@ def main(grpo_args, training_args, model_args):
     }
     active_reward_names = [name for name in grpo_args.reward_funcs if reward_switch_map.get(name, True)]
 
-    # Log active components
-    print(f"[GRPO Config] Active rewards: {active_reward_names}")
-    print(f"[GRPO Config] use_text_grpo: {training_args.use_text_grpo}")
-    print(f"[GRPO Config] use_flow_grpo: {training_args.use_flow_grpo}")
-
     if "latent_quality" in active_reward_names:
         _image_reward_components.update({
             "clean_image_root": model_args.clean_image_root,
@@ -803,11 +845,28 @@ def main(grpo_args, training_args, model_args):
         })
 
     # Get reward functions
-    reward_funcs = [reward_funcs_registry[func] for func in active_reward_names]
+    reward_funcs = []
+    for func in active_reward_names:
+        reward_funcs.append(reward_funcs_registry[func])
     # Load the dataset
     train_set = GRPODataset(
         jsonl_path=grpo_args.jsonl_path, image_root=grpo_args.image_root
     )
+
+    # Store decision_reward_smooth in a global variable for decision_reward_auto
+    global _decision_reward_smooth
+    _decision_reward_smooth = training_args.decision_reward_smooth
+
+    # Log active components
+    print(f"[GRPO Config] Active rewards: {active_reward_names}")
+    print(f"[GRPO Config] use_text_grpo: {training_args.use_text_grpo}")
+    print(f"[GRPO Config] use_flow_grpo: {training_args.use_flow_grpo}")
+    print(f"[GRPO Config] trajectory_selection_strategy: {training_args.trajectory_selection_strategy}")
+    print(f"[GRPO Config] separate_image_rewards: {training_args.separate_image_rewards}")
+    print(f"[GRPO Config] decision_reward_smooth: {training_args.decision_reward_smooth}")
+    print(f"[GRPO Config] num_timesteps: {training_args.num_timesteps}")
+    print(f"[GRPO Config] num_timesteps_train: {training_args.num_timesteps_train}")
+    print(f"[GRPO Config] image_loss_weight: {training_args.image_loss_weight}")
 
     # Initialize the GRPO trainer
     trainer = BagelInterleaveGRPOTrainer(

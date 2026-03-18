@@ -257,6 +257,7 @@ class InterleaveInferencer:
             ],
         )
 
+        unpacked_latent, unpacked_latent_llm = unpacked_latent
         image = self.decode_image(unpacked_latent[0], image_shape)
         return image
 

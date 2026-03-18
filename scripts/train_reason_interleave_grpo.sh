@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=interleaved-reasoning
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_no_vit_flow_grpo
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_improved
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -22,7 +22,7 @@ torchrun \
     --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
     --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
     --clean_image_root /root/CLEAR/datasets/processed_dataset/rl/images/ \
-    --mse_scale 0.5 \
+    --mse_scale 0.3 \
     --latent_reward_mode vae \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
@@ -33,23 +33,23 @@ torchrun \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
-    --learning_rate 1e-6 \
+    --learning_rate 2e-6 \
     --lr_scheduler_type cosine \
-    --num_iterations 2 \
+    --num_iterations 3 \
     --num_generations 8 \
-    --beta 0.04 \
-    --num_timesteps 50 \
+    --beta 0.1 \
+    --num_timesteps 30 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 16 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
     --max_steps 400 \
     --run_name $WANDB_RUN_NAME \
-    --save_steps 10\
+    --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
     --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
@@ -60,5 +60,8 @@ torchrun \
     --use_text_grpo True \
     --use_flow_grpo True \
     --sde_sigma 1.0 \
-    --num_timesteps_train 10 \
-    --image_loss_weight 0.1
+    --num_timesteps_train 20 \
+    --image_loss_weight 0.5 \
+    --trajectory_selection_strategy weighted \
+    --separate_image_rewards False \
+    --decision_reward_smooth True

@@ -419,6 +419,22 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         self.vae_model.requires_grad_(False)
         # print(f"max_grad_norm: {args.max_grad_norm}")
 
+        # Flow-GRPO trajectory selection counter for round_robin strategy
+        self._trajectory_step_counter = 0
+        # Reward function names for indexing
+        # Handle various types of callable: function, partial, lambda, etc.
+        def get_func_name(f):
+            if hasattr(f, '__name__'):
+                return f.__name__
+            elif hasattr(f, 'func'):
+                return f.func.__name__
+            elif hasattr(f, '__class__') and hasattr(f, '__call__'):
+                return f.__class__.__name__
+            else:
+                return str(f)
+
+        self.reward_func_names = [get_func_name(f) for f in reward_funcs]
+
     def _generate_and_score_completions(
             self, inputs: list[dict[str, Union[torch.Tensor, Any]]]
         ) -> dict[str, Union[torch.Tensor, Any]]:
@@ -637,6 +653,42 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         )
         advantages = advantages[process_slice]
 
+        # === Compute separate image advantages if enabled ===
+        image_advantages = None
+        if self.args.separate_image_rewards:
+            # Use only latent_quality reward for image advantage calculation
+            # Find the index of latent_quality in reward_funcs
+            latent_quality_idx = -1
+            for i, func_name in enumerate(self.reward_func_names):
+                if "latent_quality" in func_name.lower():
+                    latent_quality_idx = i
+                    break
+
+            if latent_quality_idx >= 0:
+                # Get latent_quality rewards
+                latent_quality_rewards = rewards_per_func[:, latent_quality_idx]
+                # Apply only latent_quality weight (or use full weight if preferred)
+                latent_quality_weight = self.reward_weights[latent_quality_idx]
+                # Compute advantages based on latent_quality only
+                latent_quality_rewards = latent_quality_rewards[process_slice]
+                # For image advantages, use group-based normalization too
+                # First gather all latent quality rewards
+                latent_quality_rewards_gathered = gather(latent_quality_rewards)
+                # Reshape to (num_unique_prompts, num_generations)
+                latent_quality_rewards_reshaped = latent_quality_rewards_gathered.view(-1, self.num_generations)
+                mean_latent_quality = latent_quality_rewards_reshaped.mean(dim=1)
+                std_latent_quality = latent_quality_rewards_reshaped.std(dim=1)
+                mean_latent_quality = mean_latent_quality.repeat_interleave(
+                    self.num_generations, dim=0
+                )
+                std_latent_quality = std_latent_quality.repeat_interleave(
+                    self.num_generations, dim=0
+                )
+                image_advantages = latent_quality_rewards_gathered - mean_latent_quality
+                if self.scale_rewards:
+                    image_advantages = image_advantages / (std_latent_quality + 1e-4)
+                image_advantages = image_advantages[process_slice]
+
         # --- 记录指标 (Log Metrics) ---
         # 记录 token 数量
         if mode == "train":
@@ -697,6 +749,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         return {
             "input_dict_list": input_dict_list,  # 输入数据
             "advantages": advantages,  # 计算出的优势值
+            "image_advantages": image_advantages,  # 图像单独的优势值（如果启用）
             "is_eos": is_eos,  # 是否以 EOS 结束
             "old_per_token_logps": old_per_token_logps,  # 旧的 log probabilities
             "ref_per_token_logps": ref_per_token_logps,  # 参考模型的 log probabilities
@@ -829,6 +882,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
         input_dict_list = inputs["input_dict_list"]
         advantages = inputs["advantages"]
+        # Separate advantages for image generation if enabled
+        image_advantages = inputs.get("image_advantages")
 
         completion_tokens_text = []
         for input_dict in input_dict_list:
@@ -862,8 +917,26 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         for s in steps:
                             candidates.append((sample_idx, img_idx, s))
                 if candidates:
-                    import random
-                    chosen_sample_idx, chosen_img_idx, chosen_step = random.choice(candidates)
+                    # Use the specified trajectory selection strategy
+                    strategy = self.args.trajectory_selection_strategy
+                    if strategy == "round_robin":
+                        # Round-robin: select each step in order
+                        chosen_idx = self._trajectory_step_counter % len(candidates)
+                        chosen_sample_idx, chosen_img_idx, chosen_step = candidates[chosen_idx]
+                        self._trajectory_step_counter += 1
+                    elif strategy == "weighted":
+                        # Weighted sampling: favor middle steps (t ≈ 0.5)
+                        # Middle steps have more signal for learning
+                        import random
+                        weights = [1.0 / (abs(0.5 - s['timestep']) + 0.1) for _, _, s in candidates]
+                        total_weight = sum(weights)
+                        weights = [w / total_weight for w in weights]
+                        chosen_idx = random.choices(range(len(candidates)), weights=weights, k=1)[0]
+                        chosen_sample_idx, chosen_img_idx, chosen_step = candidates[chosen_idx]
+                    else:  # "random" (default)
+                        # Pure random sampling
+                        import random
+                        chosen_sample_idx, chosen_img_idx, chosen_step = random.choice(candidates)
                     has_step = True
 
         # === Phase 2: Combined forward — text logits + image v_pred ===
@@ -939,7 +1012,13 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
                         delta_logp = log_p_new - log_p_old
                         ratio = torch.exp(delta_logp)
-                        adv = advantages[chosen_sample_idx]
+
+                        # Use separate image advantage if enabled, otherwise use combined advantage
+                        if self.args.separate_image_rewards and image_advantages is not None:
+                            adv = image_advantages[chosen_sample_idx]
+                        else:
+                            adv = advantages[chosen_sample_idx]
+
                         clipped_ratio = torch.clamp(
                             ratio, 1 - self.epsilon_low, 1 + self.epsilon_high
                         )
@@ -1068,6 +1147,16 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # Image GRPO diagnostics
         if self.args.use_flow_grpo:
             self._metrics[mode].setdefault("image_grpo_loss", []).append(image_loss_value)
+            self._metrics[mode].setdefault("image_loss_weight", []).append(
+                self.args.image_loss_weight
+            )
+            if self.args.separate_image_rewards and image_advantages is not None:
+                self._metrics[mode].setdefault("image/advantages_mean", []).append(
+                    image_advantages.mean().item()
+                )
+                self._metrics[mode].setdefault("image/advantages_std", []).append(
+                    image_advantages.std().item()
+                )
             if _img_delta_logps:
                 n = len(_img_delta_logps)
                 self._metrics[mode].setdefault("image/delta_logp_mean", []).append(

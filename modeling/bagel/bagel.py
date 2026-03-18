@@ -854,6 +854,58 @@ class Bagel(PreTrainedModel):
 
         return past_key_values
 
+    @torch.no_grad
+    def forward_cache_update_vae_from_packed_latent(
+        self,
+        past_key_values: NaiveCache,
+        packed_latent: torch.Tensor,  # Already vae2llm projected + pos_embed + timestep_embed (final format)
+        packed_vae_token_indexes: torch.LongTensor,
+        packed_text_ids: torch.LongTensor,
+        packed_text_indexes: torch.LongTensor,
+        packed_position_ids: torch.LongTensor,
+        packed_seqlens: torch.IntTensor,
+        packed_indexes: torch.LongTensor,
+        key_values_lens: torch.IntTensor,
+        packed_key_value_indexes: torch.Tensor,
+    ):
+        """
+        Directly update context with already packed latent (final format from generate_image).
+        The packed_latent is already: vae2llm(x_t) + timestep_embeds + pos_embed
+        So we don't need to add these embeddings again.
+        """
+        packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
+        packed_sequence = packed_text_embedding.new_zeros(
+            (sum(packed_seqlens), self.hidden_size)
+        )
+        packed_sequence[packed_text_indexes] = packed_text_embedding
+
+        # Use the already packed latent directly (already includes pos_embed + timestep_embed)
+        packed_sequence[packed_vae_token_indexes] = packed_latent
+
+        extra_inputs = {}
+        if self.use_moe:
+            extra_inputs = {
+                "mode": "gen",
+                "packed_vae_token_indexes": packed_vae_token_indexes,
+                "packed_text_indexes": packed_text_indexes,
+            }
+
+        output = self.language_model.forward_inference(
+            packed_query_sequence=packed_sequence,
+            query_lens=packed_seqlens,
+            packed_query_position_ids=packed_position_ids,
+            packed_query_indexes=packed_indexes,
+            past_key_values=past_key_values,
+            key_values_lens=key_values_lens,
+            packed_key_value_indexes=packed_key_value_indexes,
+            update_past_key_values=True,
+            is_causal=False,
+            **extra_inputs,
+        )
+        past_key_values = output.past_key_values
+
+        return past_key_values
+
     def prepare_vae_latent(self, curr_kvlens, curr_rope, image_sizes, new_token_ids):
         packed_text_ids, packed_text_indexes = list(), list()
         packed_vae_position_ids, packed_vae_token_indexes, packed_init_noises = (
@@ -1058,7 +1110,16 @@ class Bagel(PreTrainedModel):
             )  # velocity pointing from data to noise
 
         unpacked_latent = x_t.split((packed_seqlens - 2).tolist())
-        return unpacked_latent
+
+        # Project the final latent to LLM space for direct context update (skip decode+encode)
+        # This matches the format used in _forward_flow: vae2llm(x_t) + timestep_embeds + pos_embed
+        packed_pos_embed = self.latent_pos_embed(packed_vae_position_ids)
+        packed_timestep_embeds = self.time_embedder(torch.tensor([0.0], device=x_t.device))
+        x_t_llm = self.vae2llm(x_t) + packed_timestep_embeds + packed_pos_embed
+        unpacked_latent_llm = x_t_llm.split((packed_seqlens - 2).tolist())
+
+        # Return both: original format for decode, LLM format for direct context update
+        return unpacked_latent, unpacked_latent_llm
 
     @torch.no_grad
     def _forward_flow(
@@ -1338,6 +1399,13 @@ class Bagel(PreTrainedModel):
 
         unpacked_latent = x_t.split((packed_seqlens - 2).tolist())
 
+        # Project the final latent to LLM space for direct context update (skip decode+encode)
+        # This matches the format used in _forward_flow: vae2llm(x_t) + timestep_embeds + pos_embed
+        packed_pos_embed = self.latent_pos_embed(packed_vae_position_ids)
+        packed_timestep_embeds = self.time_embedder(torch.tensor([0.0], device=x_t.device))
+        x_t_llm = self.vae2llm(x_t) + packed_timestep_embeds + packed_pos_embed
+        unpacked_latent_llm = x_t_llm.split((packed_seqlens - 2).tolist())
+
         # Add generation context to trajectory for log prob recomputation
         if record_trajectory and trajectory:
             # 只存轻量级的 static params，不存 past_key_values（避免 OOM）
@@ -1354,7 +1422,8 @@ class Bagel(PreTrainedModel):
             }
             trajectory[-1]['_context'] = trajectory_context
 
-        return unpacked_latent, trajectory
+        # Return both: original format for decode, LLM format for direct context update
+        return unpacked_latent, unpacked_latent_llm, trajectory
 
     def forward_velocity(
         self,
