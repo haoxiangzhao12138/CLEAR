@@ -27,29 +27,29 @@ torchrun \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
     --enable_reward_format True \
-    --enable_reward_decision True \
-    --enable_reward_latent_quality True \
+    --enable_reward_decision False \
+    --enable_reward_latent_quality False \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
     --learning_rate 1e-6 \
     --lr_scheduler_type cosine \
-    --num_iterations 2 \
+    --num_iterations 1 \
     --num_generations 8 \
     --beta 0.04 \
     --num_timesteps 50 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 16 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
     --max_steps 400 \
     --run_name $WANDB_RUN_NAME \
-    --save_steps 10\
+    --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
     --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
@@ -58,7 +58,7 @@ torchrun \
     --use_flex False \
     --max_num_tokens 16384 \
     --use_text_grpo True \
-    --use_flow_grpo True \
+    --use_flow_grpo False \
     --sde_sigma 1.0 \
     --num_timesteps_train 10 \
     --image_loss_weight 0.1

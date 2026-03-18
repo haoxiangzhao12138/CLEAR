@@ -345,13 +345,18 @@ def decision_reward_auto(completions, solution, question, **kwargs):
     基于结果回溯的策略决策奖励（无需难度标签）。
     复用 accuracy_reward_v2 缓存的 LLM judge 结果来判断是否答对。
 
-    逻辑矩阵：
+    修改后的逻辑矩阵（鼓励生成图片）：
     | 是否恢复 | 是否答对 | 奖励 | 原因 |
     |----------|----------|------|------|
     | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
-    | 没恢复   | 答对了   | 0.8  | 效率高，直接答对 |
-    | 恢复了   | 没答对   | 0.1  | 微弱鼓励尝试，避免训练早期完全回避生成 |
-    | 没恢复   | 没答对   | 0.0  | 最差 |
+    | 没恢复   | 答对了   | 0.6  | 直接答对，但不一定是最优策略 |
+    | 恢复了   | 没答对   | 0.3  | 尝试了工具，鼓励探索（原0.1提高）|
+    | 没恢复   | 没答对   | 0.0  | 最差：应该生成但没生成 |
+
+    调整说明：
+    - 提高生成但答错的奖励：0.1 → 0.3（鼓励模型尝试生成）
+    - 降低不生成但答对的奖励：0.8 → 0.6（避免模型过于保守）
+    - 这样模型会更愿意在不确定时尝试生成图片
 
     注意：reward_funcs 列表中 accuracy 必须排在 decision 前面，
     这样 _accuracy_cache 在本函数执行时已有数据。
@@ -372,9 +377,9 @@ def decision_reward_auto(completions, solution, question, **kwargs):
         if did_restore and correct:
             rewards.append(1.0)
         elif not did_restore and correct:
-            rewards.append(0.8)
+            rewards.append(0.6)  # 原来是 0.8，降低以鼓励生成
         elif did_restore and not correct:
-            rewards.append(0.1)
+            rewards.append(0.3)  # 原来是 0.1，提高以鼓励探索
         else:
             rewards.append(0.0)
 

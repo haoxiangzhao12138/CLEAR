@@ -602,13 +602,41 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 在多 GPU/多进程设置中，收集所有进程的奖励分数
         rewards_per_func = gather(rewards_per_func)
         # Apply weights to each reward function's output and sum
-        # 按实际参与的 reward 权重归一化，避免 NaN 导致的不公平
-        # （没生图的样本 latent_quality 为 NaN，如果直接 nansum 会导致其 reward 上限低于有生图的样本）
+        # 修改后的聚合方式：
+        # 1. 使用固定权重，不再按实际参与维度归一化
+        # 2. 给不生图的样本（latent_quality 为 NaN）添加轻微惩罚，鼓励生成
         weights = self.reward_weights.to(device).unsqueeze(0)           # (1, num_funcs)
         weighted = rewards_per_func * weights                           # (N, num_funcs)
-        valid_mask = ~torch.isnan(rewards_per_func)                     # (N, num_funcs)
-        weight_sum = (valid_mask.float() * weights).sum(dim=1)          # (N,)
-        rewards = weighted.nan_to_num(0.0).sum(dim=1) / weight_sum.clamp(min=1e-8)  # (N,)
+
+        # 检查 latent_quality 是否存在（通常是最后一个 reward）
+        has_latent_quality = "latent_quality" in self.reward_func_names
+        if has_latent_quality:
+            latent_idx = self.reward_func_names.index("latent_quality")
+            # 不生图的样本：latent_quality 为 NaN，给 -0.1 惩罚
+            latent_mask = ~torch.isnan(rewards_per_func[:, latent_idx])  # True = 有生图
+            no_image_penalty = (~latent_mask) * (-0.1)  # 惩罚不生图的样本
+            weighted = weighted.nan_to_num(0.0)
+        else:
+            no_image_penalty = 0.0
+            weighted = weighted.nan_to_num(0.0)
+
+        # 计算总奖励（固定权重，不除以 weight_sum）
+        rewards = weighted.sum(dim=1) + no_image_penalty  # (N,)
+
+        # === 单独计算 latent_quality 的 advantage，用于 Flow GRPO ===
+        advantages_image = None
+        if has_latent_quality:
+            latent_quality = rewards_per_func[:, latent_idx]  # (N,)
+            # 用 NaN 填充替代不生图样本
+            latent_quality_filled = latent_quality.nan_to_num(0.0)
+
+            # 计算组内均值和标准差
+            mean_latent_quality = latent_quality_filled.view(-1, self.num_generations).mean(dim=1)
+            std_latent_quality = latent_quality_filled.view(-1, self.num_generations).std(dim=1)
+            mean_latent_quality = mean_latent_quality.repeat_interleave(self.num_generations, dim=0)
+
+            # 计算 latent_quality 的 advantage
+            advantages_image = latent_quality_filled - mean_latent_quality  # (N,)
 
         # Compute grouped-wise rewards (按组计算均值和标准差)
         # 将奖励重塑为 (num_unique_prompts, num_generations_per_prompt)
@@ -636,6 +664,10 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             (self.accelerator.process_index + 1) * len(inputs),
         )
         advantages = advantages[process_slice]
+
+        # 同样 slice advantages_image
+        if advantages_image is not None:
+            advantages_image = advantages_image[process_slice]
 
         # --- 记录指标 (Log Metrics) ---
         # 记录 token 数量
@@ -696,7 +728,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 返回一个字典，包含生成和评分过程中的关键张量
         return {
             "input_dict_list": input_dict_list,  # 输入数据
-            "advantages": advantages,  # 计算出的优势值
+            "advantages": advantages,  # 计算出的优势值（用于 Text GRPO）
+            "advantages_image": advantages_image,  # 图像质量优势值（用于 Flow GRPO）
             "is_eos": is_eos,  # 是否以 EOS 结束
             "old_per_token_logps": old_per_token_logps,  # 旧的 log probabilities
             "ref_per_token_logps": ref_per_token_logps,  # 参考模型的 log probabilities
@@ -824,11 +857,16 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         #   → (text logits, image v_pred) from the SAME hidden states
         #   → gradients flow: img_loss → v_pred → attention → text repr
         #                      text_loss → logits → attention → image repr
+        #
+        # 修改说明：
+        # 1. Flow GRPO 使用 advantages_image（latent_quality 优势）而非总 advantage
+        # 2. step 选择策略：固定选最后一个 step（timestep 最小，最接近清晰图）
         # ================================================================
         device = self.accelerator.device
 
         input_dict_list = inputs["input_dict_list"]
         advantages = inputs["advantages"]
+        advantages_image = inputs.get("advantages_image")  # 图像质量优势
 
         completion_tokens_text = []
         for input_dict in input_dict_list:
@@ -862,8 +900,9 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         for s in steps:
                             candidates.append((sample_idx, img_idx, s))
                 if candidates:
-                    import random
-                    chosen_sample_idx, chosen_img_idx, chosen_step = random.choice(candidates)
+                    # 修改：按 timestep 从小到大排序，选择最后一个（最接近清晰图）
+                    candidates.sort(key=lambda x: x[2]['timestep'])
+                    chosen_sample_idx, chosen_img_idx, chosen_step = candidates[-1]
                     has_step = True
 
         # === Phase 2: Combined forward — text logits + image v_pred ===
@@ -939,7 +978,15 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
                         delta_logp = log_p_new - log_p_old
                         ratio = torch.exp(delta_logp)
-                        adv = advantages[chosen_sample_idx]
+
+                        # 修改：Flow GRPO 使用 advantages_image（图像质量优势）而非总 advantage
+                        # 这样图像生成的梯度只受图像质量影响，不受文本正确性影响
+                        if advantages_image is not None:
+                            adv = advantages_image[chosen_sample_idx]
+                        else:
+                            # fallback: 如果没有 advantages_image，使用总 advantage
+                            adv = advantages[chosen_sample_idx]
+
                         clipped_ratio = torch.clamp(
                             ratio, 1 - self.epsilon_low, 1 + self.epsilon_high
                         )
