@@ -466,6 +466,9 @@ def main():
 
                     # Skip the evaluation part if only infer
                     if args.mode == "infer":
+                        # Print image generation statistics if available
+                        if hasattr(model, 'print_image_gen_stats'):
+                            model.print_image_gen_stats()
                         continue
 
                     # Skip the evaluation part if the dataset evaluation is not supported or annotations are missing
@@ -533,6 +536,10 @@ def main():
                     # Restore the proxy
                     if eval_proxy is not None:
                         proxy_set(old_proxy)
+
+                    # Print image generation statistics if available
+                    if hasattr(model, 'print_image_gen_stats'):
+                        model.print_image_gen_stats()
 
                     # Create the symbolic links for the prediction files
                     files = os.listdir(pred_root)

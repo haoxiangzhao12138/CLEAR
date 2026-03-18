@@ -53,6 +53,8 @@ class InterleaveInferencer:
         vit_transform,
         new_token_ids,
         device,
+        verbose_print: bool = False,
+        enable_image_gen_stats: bool = False,
     ):
         self.model = model
         self.vae_model = vae_model
@@ -61,6 +63,34 @@ class InterleaveInferencer:
         self.vit_transform = vit_transform
         self.new_token_ids = new_token_ids
         self.device = device
+        self.verbose_print = verbose_print
+        self.enable_image_gen_stats = enable_image_gen_stats
+
+        # Image generation statistics
+        self.image_gen_count = 0
+        self.data_count = 0
+
+    def increment_data_count(self):
+        """Increment the data sample count."""
+        self.data_count += 1
+
+    def increment_image_gen_count(self):
+        """Increment the image generation count."""
+        self.image_gen_count += 1
+        if self.enable_image_gen_stats:
+            print(f"\033[33m[Image Gen Stats] Data: {self.data_count}, Image Generations: {self.image_gen_count}\033[0m")
+
+    def get_image_gen_stats(self):
+        """Get current image generation statistics."""
+        return {
+            "data_count": self.data_count,
+            "image_gen_count": self.image_gen_count,
+        }
+
+    def print_image_gen_stats(self):
+        """Print current image generation statistics."""
+        stats = self.get_image_gen_stats()
+        print(f"\033[36m[Final Image Gen Stats] Total Data: {stats['data_count']}, Total Image Generations: {stats['image_gen_count']}\033[0m")
 
     def init_gen_context(self):
         gen_context = {
@@ -155,6 +185,9 @@ class InterleaveInferencer:
         num_timesteps=50,
         timestep_shift=3.0,
     ):
+        # Increment image generation count
+        self.increment_image_gen_count()
+
         past_key_values = gen_context["past_key_values"]
         kv_lens = gen_context["kv_lens"]
         ropes = gen_context["ropes"]
@@ -283,6 +316,11 @@ class InterleaveInferencer:
         )
         output = self.tokenizer.decode(unpacked_latent[:, 0])
         output = output.split("<|im_end|>")[0].split("<|im_start|>")[1]
+
+        # Print output if verbose_print is enabled
+        if self.verbose_print:
+            print(f"\033[32m[Generated Text]\n{output}\033[0m")
+
         return output
 
 
@@ -490,6 +528,9 @@ class InterleaveInferencer:
         # the input_list shuould have the input image and the text prompt
         # it can generate the interleaved multimodal chain-of-thought by the model
         # but the image generation is decided by the model itself
+
+        # Increment data count for statistics
+        self.increment_data_count()
 
         output_list = []
         gen_context = self.init_gen_context()

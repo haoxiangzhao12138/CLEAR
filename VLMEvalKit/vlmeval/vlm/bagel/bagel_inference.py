@@ -134,10 +134,14 @@ class BagelInference(BaseModel):
         output_need_vit: bool = True,   # 控制生成图片后是否将 ViT token 插入上下文
         consider_think: bool = True,
         verbose=False,
+        verbose_print: bool = False,  # 控制是否打印模型输出
+        enable_image_gen_stats: bool = False,  # 控制是否启用图片生成统计
         save_file=None,  # if None, then no save the reasoning process
     ):
         super().__init__()
         self.verbose = verbose
+        self.verbose_print = verbose_print
+        self.enable_image_gen_stats = enable_image_gen_stats
         self.text_temperature = text_temperature
         self.do_sample = do_sample
         self.max_new_tokns = max_new_tokns
@@ -205,6 +209,8 @@ class BagelInference(BaseModel):
             vit_transform=self.vit_transform,
             new_token_ids=self.new_token_ids,
             device=self.device,
+            verbose_print=self.verbose_print,
+            enable_image_gen_stats=self.enable_image_gen_stats,
         )
 
         self.inference_hyper = dict(
@@ -271,3 +277,17 @@ class BagelInference(BaseModel):
                 target_dir=os.path.join("./stored_rl", self.save_file),
             )
         return response
+
+    def print_image_gen_stats(self):
+        """Print image generation statistics."""
+        if self.enable_image_gen_stats and hasattr(self.inferencer, 'print_image_gen_stats'):
+            self.inferencer.print_image_gen_stats()
+
+    def __del__(self):
+        """Destructor to print final statistics when the object is destroyed."""
+        try:
+            if self.enable_image_gen_stats and hasattr(self, 'inferencer'):
+                self.print_image_gen_stats()
+        except Exception as e:
+            # Silently ignore errors in destructor
+            pass
