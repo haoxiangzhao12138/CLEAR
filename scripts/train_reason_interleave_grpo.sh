@@ -27,8 +27,8 @@ torchrun \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
     --enable_reward_format True \
-    --enable_reward_decision True \
-    --enable_reward_latent_quality True \
+    --enable_reward_decision False \
+    --enable_reward_latent_quality False \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
@@ -58,7 +58,7 @@ torchrun \
     --use_flex False \
     --max_num_tokens 16384 \
     --use_text_grpo True \
-    --use_flow_grpo True \
+    --use_flow_grpo False \
     --sde_sigma 1.0 \
     --num_timesteps_train 20 \
     --image_loss_weight 0.5 \
