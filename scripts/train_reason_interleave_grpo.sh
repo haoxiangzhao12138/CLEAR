@@ -3,8 +3,8 @@ export LOG_PATH="./debug_log_2b.txt"
 export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
-export WANDB_PROJECT=interleaved-reasoning
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_improved_standard
+export WANDB_PROJECT=clear_interleave_rl
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
