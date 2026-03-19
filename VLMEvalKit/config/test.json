@@ -3,7 +3,7 @@
         "BAGEL": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260318_022928_no_vit_flow_grpo_loooooog/checkpoint-100",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260319_001141_improved/checkpoint-200",
             "reasoning_mode": "interleave",
             "is_thinking": false,
             "is_ema": false,
@@ -15,9 +15,9 @@
         }
     },
     "data": {
-        "MMVet_LOW_LEVEL_HIGH": {
-            "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_HIGH"
+        "R-Bench-Dis": {
+            "class": "ImageMCQDataset",
+            "dataset": "R-Bench-Dis"
         }
     }
 }

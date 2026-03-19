@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=interleaved-reasoning
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_improved
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_improved_standard
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -27,17 +27,17 @@ torchrun \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
     --enable_reward_format True \
-    --enable_reward_decision False \
-    --enable_reward_latent_quality False \
+    --enable_reward_decision True \
+    --enable_reward_latent_quality True \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
-    --learning_rate 2e-6 \
+    --learning_rate 1e-6 \
     --lr_scheduler_type cosine \
-    --num_iterations 3 \
+    --num_iterations 1 \
     --num_generations 8 \
-    --beta 0.1 \
+    --beta 0.0 \
     --num_timesteps 30 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
@@ -47,7 +47,7 @@ torchrun \
     --logging_steps 1 \
     --report_to wandb \
     --gradient_checkpointing false \
-    --max_steps 400 \
+    --max_steps 200 \
     --run_name $WANDB_RUN_NAME \
     --save_steps 50\
     --save_only_model true \
@@ -58,10 +58,10 @@ torchrun \
     --use_flex False \
     --max_num_tokens 16384 \
     --use_text_grpo True \
-    --use_flow_grpo False \
+    --use_flow_grpo True \
     --sde_sigma 1.0 \
     --num_timesteps_train 20 \
     --image_loss_weight 0.5 \
     --trajectory_selection_strategy weighted \
-    --separate_image_rewards False \
+    --separate_image_rewards True \
     --decision_reward_smooth True

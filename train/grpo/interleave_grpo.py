@@ -1,5 +1,6 @@
 import os
 import re
+import torch
 from datetime import datetime
 from dataclasses import dataclass, field
 from train.grpo.bagel_interleave_grpo_trainer import (
@@ -34,6 +35,7 @@ from copy import deepcopy
 from collections import defaultdict
 import math
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from data.data_utils import patchify
 
@@ -434,8 +436,11 @@ def decision_reward_auto(completions, solution, question, **kwargs):
 
 
 def _extract_vit_features(image, vit_model, vit_transform, patch_size,
-                           get_position_ids_fn, max_patches, device):
+                           get_position_ids_fn, max_patches, device=None):
     """从单张 PIL Image 提取 ViT pooled feature。"""
+    # 如果没有传入 device，自动使用当前 GPU 设备
+    if device is None:
+        device = torch.cuda.current_device()
     image_tensor = vit_transform(image).to(device)
     position_ids = get_position_ids_fn(
         image_tensor.size(1), image_tensor.size(2),
@@ -461,7 +466,6 @@ def latent_quality_reward(completions, image_name, **kwargs):
 
     没有生成图像的样本返回 NaN（不参与该 reward 聚合）。
     """
-    import torch.nn.functional as F
 
     comp = _image_reward_components
     if not comp:
@@ -469,10 +473,10 @@ def latent_quality_reward(completions, image_name, **kwargs):
 
     mode = comp.get("mode", "vae")
     clean_root = comp["clean_image_root"]
-    device = comp["device"]
 
     # VAE 相关组件
     need_vae = mode in ("vae", "both")
+    vae_model = None
     if need_vae:
         vae_model = comp["vae_model"]
         vae_transform = comp["vae_transform"]
@@ -482,12 +486,17 @@ def latent_quality_reward(completions, image_name, **kwargs):
 
     # ViT 相关组件
     need_vit = mode in ("vit", "both")
+    vit_model = None
     if need_vit:
         vit_model = comp["vit_model"]
         vit_transform = comp["vit_transform"]
         vit_patch_size = comp["vit_patch_size"]
         vit_max_patches = comp["vit_max_patches"]
         get_position_ids_fn = comp["get_position_ids_fn"]
+
+    # 动态获取正确的设备，避免硬编码 "cuda" 导致多 GPU 死锁
+    # 在 DeepSpeed ZeRO-3 下，使用 torch.cuda.current_device() 获取当前 GPU
+    device = torch.cuda.current_device()
 
     rewards = []
     for idx, completion in enumerate(completions):
@@ -571,18 +580,26 @@ def latent_quality_reward(completions, image_name, **kwargs):
                 # ---- 3b. ViT 语义子指标 ----
                 r_vit = 0.0
                 if need_vit and gen_image is not None:
-                    gen_feat = _extract_vit_features(
-                        gen_image, vit_model, vit_transform,
-                        vit_patch_size, get_position_ids_fn,
-                        vit_max_patches, device,
-                    )
-                    clean_feat = _extract_vit_features(
-                        clean_image, vit_model, vit_transform,
-                        vit_patch_size, get_position_ids_fn,
-                        vit_max_patches, device,
-                    )
-                    sim = F.cosine_similarity(gen_feat, clean_feat, dim=-1).item()
-                    r_vit = max(sim, 0.0)
+                    try:
+                        # 确保 vit_model 在 eval 模式，避免 ZeRO-3 同步问题
+                        vit_model.eval()
+                        gen_feat = _extract_vit_features(
+                            gen_image, vit_model, vit_transform,
+                            vit_patch_size, get_position_ids_fn,
+                            vit_max_patches,
+                        )
+                        clean_feat = _extract_vit_features(
+                            clean_image, vit_model, vit_transform,
+                            vit_patch_size, get_position_ids_fn,
+                            vit_max_patches,
+                        )
+                        sim = F.cosine_similarity(gen_feat, clean_feat, dim=-1).item()
+                        r_vit = max(sim, 0.0)
+                    except Exception as e:
+                        print(f"[latent_quality_reward] ViT feature extraction error for {fname}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        r_vit = 0.0
 
             # ---- 4. 按模式综合得分 ----
             if mode == "vae":
@@ -831,9 +848,22 @@ def main(grpo_args, training_args, model_args):
     active_reward_names = [name for name in grpo_args.reward_funcs if reward_switch_map.get(name, True)]
 
     if "latent_quality" in active_reward_names:
+        # 在 ZeRO-3 环境下，ViT 模型参数被分片，调用时会触发 all-gather 导致死锁
+        # 解决方案：如果使用 ViT reward，创建一个独立的 ViT 副本
+        if model_args.latent_reward_mode in ("vit", "both"):
+            # 创建 ViT 的深拷贝，避免 ZeRO-3 分片问题
+            vit_model_for_reward = deepcopy(model.vit_model)
+            vit_model_for_reward.eval()
+            for param in vit_model_for_reward.parameters():
+                param.requires_grad = False
+            # 移动到当前 GPU
+            vit_model_for_reward = vit_model_for_reward.to(torch.cuda.current_device())
+            print("[GRPO Config] Created independent ViT copy for reward calculation")
+        else:
+            vit_model_for_reward = None
+
         _image_reward_components.update({
             "clean_image_root": model_args.clean_image_root,
-            "device": "cuda",
             "mode": model_args.latent_reward_mode,
             # VAE 组件
             "vae_model": vae_model,
@@ -841,8 +871,8 @@ def main(grpo_args, training_args, model_args):
             "latent_patch_size": model_args.latent_patch_size,
             "latent_channel": vae_config.z_channels,
             "mse_scale": model_args.mse_scale,
-            # ViT 组件
-            "vit_model": model.vit_model,
+            # ViT 组件 - 使用独立副本避免 ZeRO-3 死锁
+            "vit_model": vit_model_for_reward,
             "vit_transform": vit_transform,
             "vit_patch_size": model_args.vit_patch_size,
             "vit_max_patches": model_args.vit_max_num_patch_per_side,
@@ -891,10 +921,10 @@ def main(grpo_args, training_args, model_args):
 
     # 设置 reward 权重：accuracy=0.45, format=0.15, decision=0.15, latent_quality=0.25
     weight_map = {
-        "accuracy": 0.45,
-        "format": 0.15,
-        "decision": 0.15,
-        "latent_quality": 0.25,
+        "accuracy": 0.5,
+        "format": 0.1,
+        "decision": 0.1,
+        "latent_quality": 0.3,
     }
     reward_weights = [weight_map[name] for name in active_reward_names]
     trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)

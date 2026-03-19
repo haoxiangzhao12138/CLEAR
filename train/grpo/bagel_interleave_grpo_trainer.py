@@ -639,21 +639,6 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 计算总奖励（固定权重，不除以 weight_sum）
         rewards = weighted.sum(dim=1) + no_image_penalty  # (N,)
 
-        # === 单独计算 latent_quality 的 advantage，用于 Flow GRPO ===
-        advantages_image = None
-        if has_latent_quality:
-            latent_quality = rewards_per_func[:, latent_idx]  # (N,)
-            # 用 NaN 填充替代不生图样本
-            latent_quality_filled = latent_quality.nan_to_num(0.0)
-
-            # 计算组内均值和标准差
-            mean_latent_quality = latent_quality_filled.view(-1, self.num_generations).mean(dim=1)
-            std_latent_quality = latent_quality_filled.view(-1, self.num_generations).std(dim=1)
-            mean_latent_quality = mean_latent_quality.repeat_interleave(self.num_generations, dim=0)
-
-            # 计算 latent_quality 的 advantage
-            advantages_image = latent_quality_filled - mean_latent_quality  # (N,)
-
         # Compute grouped-wise rewards (按组计算均值和标准差)
         # 将奖励重塑为 (num_unique_prompts, num_generations_per_prompt)
         # 然后计算每组的均值和标准差
@@ -695,10 +680,10 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             if latent_quality_idx >= 0:
                 # Get latent_quality rewards
                 latent_quality_rewards = rewards_per_func[:, latent_quality_idx]
-                # Apply only latent_quality weight (or use full weight if preferred)
-                latent_quality_weight = self.reward_weights[latent_quality_idx]
+                # Replace NaN with 0.0 before computing advantages (for samples without generated images)
+                # This prevents NaN from propagating to image_advantages and image_loss
+                latent_quality_rewards = latent_quality_rewards.nan_to_num(0.0)
                 # Compute advantages based on latent_quality only
-                latent_quality_rewards = latent_quality_rewards[process_slice]
                 # For image advantages, use group-based normalization too
                 # First gather all latent quality rewards
                 latent_quality_rewards_gathered = gather(latent_quality_rewards)
@@ -715,7 +700,12 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 image_advantages = latent_quality_rewards_gathered - mean_latent_quality
                 if self.scale_rewards:
                     image_advantages = image_advantages / (std_latent_quality + 1e-4)
-                image_advantages = image_advantages[process_slice]
+                # Slice to keep only the local part of the data
+                process_slice_advantages = slice(
+                    self.accelerator.process_index * len(inputs),
+                    (self.accelerator.process_index + 1) * len(inputs),
+                )
+                image_advantages = image_advantages[process_slice_advantages]
 
         # --- 记录指标 (Log Metrics) ---
         # 记录 token 数量
@@ -907,8 +897,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         #                      text_loss → logits → attention → image repr
         #
         # 修改说明：
-        # 1. Flow GRPO 使用 advantages_image（latent_quality 优势）而非总 advantage
-        # 2. step 选择策略：固定选最后一个 step（timestep 最小，最接近清晰图）
+        # 1. Flow GRPO 使用 image_advantages（latent_quality 单独计算的优势）
+        # 2. step 选择策略：round_robin/weighted/random
         # ================================================================
         device = self.accelerator.device
 
@@ -1186,9 +1176,13 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 self._metrics[mode].setdefault("image/advantages_mean", []).append(
                     image_advantages.mean().item()
                 )
-                self._metrics[mode].setdefault("image/advantages_std", []).append(
-                    image_advantages.std().item()
-                )
+                # Only compute std if there are at least 2 elements to avoid warning
+                if image_advantages.numel() > 1:
+                    self._metrics[mode].setdefault("image/advantages_std", []).append(
+                        image_advantages.std().item()
+                    )
+                else:
+                    self._metrics[mode].setdefault("image/advantages_std", []).append(0.0)
             if _img_delta_logps:
                 n = len(_img_delta_logps)
                 self._metrics[mode].setdefault("image/delta_logp_mean", []).append(
