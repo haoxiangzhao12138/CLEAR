@@ -1022,10 +1022,23 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
                         t_safe = max(t_val, 1e-6)
                         score_neg = (x_t + (1 - t_safe) * v_pred_img) / t_safe
+
+                        # Clip score to prevent numerical instability when t is very small
+                        # This prevents the score from exploding when t → 0
+                        score_neg = torch.clamp(score_neg, min=-100.0, max=100.0)
+
                         drift = v_pred_img + (sde_sigma ** 2 / 2) * score_neg
                         mu_new = x_t - drift * dt_val
                         variance = sde_sigma ** 2 * dt_val
-                        log_p_new = -0.5 * ((x_next - mu_new) ** 2 / variance).mean()
+
+                        # Compute log probability with correct normalization
+                        # Use .sum() instead of .mean() for correct log probability in GRPO
+                        # The ratio exp(log_p_new - log_p_old) is invariant to constant terms,
+                        # but using sum() ensures proper gradient scaling
+                        sq_error = ((x_next - mu_new) ** 2 / variance)
+                        # Clip squared error to prevent overflow/explosion
+                        sq_error = torch.clamp(sq_error, min=-1e8, max=1e8)
+                        log_p_new = -0.5 * sq_error.sum()
 
                         if self.num_iterations > 1:
                             log_p_old = torch.tensor(chosen_step['log_prob_old'], device=device)

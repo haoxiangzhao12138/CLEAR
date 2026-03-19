@@ -1363,12 +1363,17 @@ class Bagel(PreTrainedModel):
                 # SDE mode: add stochastic noise to the ODE sampling process.
                 #
                 # v_t points data→noise (same as ODE).
-                # score_neg = -∇log p_t(x_t) = (x_t + (1-t)*v_t) / t
+                # score_neg = -∇log p_t(x_t) ≈ (x_t + (1-t)*v_t) / t
                 # The denoising drift (noise→data) with score correction:
                 #   effective = v_t + (σ²/2) * score_neg
                 # We SUBTRACT this (like ODE subtracts v_t) and add diffusion noise.
                 t_safe = torch.clamp(t, min=1e-6) if isinstance(t, torch.Tensor) else max(t, 1e-6)
                 score_neg = (x_t + (1 - t_safe) * v_t) / t_safe
+
+                # Clip score to prevent numerical instability when t is very small
+                # This prevents the score from exploding when t → 0
+                score_neg = torch.clamp(score_neg, min=-100.0, max=100.0)
+
                 drift = v_t + (sde_sigma ** 2 / 2) * score_neg
 
                 noise = torch.randn_like(x_t)
@@ -1378,9 +1383,22 @@ class Bagel(PreTrainedModel):
                 # Record trajectory
                 if record_trajectory:
                     # Gaussian transition: x_next ~ N(mu, variance)
+                    # For D-dimensional latent space:
+                    #   log p(x_next | x_t) = -0.5 * D * log(2π) - 0.5 * log|Σ| - 0.5 * (x-μ)^T Σ^{-1} (x-μ)
+                    # With isotropic variance Σ = σ² * I * dt:
+                    #   log p(x_next | x_t) = -0.5 * ((x_next - mu)^2 / variance).sum() - 0.5 * D * log(2π * variance)
+                    #
+                    # The constant term -0.5 * D * log(2π * variance) cancels out when computing
+                    # the ratio exp(log_p_new / log_p_old) in GRPO, so we omit it.
+                    # We use .sum() instead of .mean() for correct normalization.
                     mu = x_t - drift * dt
                     variance = sde_sigma ** 2 * dt
-                    log_prob_old = -0.5 * ((x_next - mu) ** 2 / variance).mean()
+
+                    # Numerical stability: clip the squared error to prevent overflow
+                    sq_error = ((x_next - mu) ** 2 / variance)
+                    sq_error = torch.clamp(sq_error, min=-1e8, max=1e8)
+
+                    log_prob_old = -0.5 * sq_error.sum()
 
                     trajectory.append({
                         'x_t': x_t.detach().cpu(),

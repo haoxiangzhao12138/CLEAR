@@ -60,8 +60,8 @@ torchrun \
     --use_text_grpo True \
     --use_flow_grpo True \
     --sde_sigma 1.0 \
-    --num_timesteps_train 20 \
+    --num_timesteps_train 10 \
     --image_loss_weight 0.5 \
     --trajectory_selection_strategy weighted \
-    --separate_image_rewards True \
-    --decision_reward_smooth True
+    --separate_image_rewards False \
+    --decision_reward_smooth False
