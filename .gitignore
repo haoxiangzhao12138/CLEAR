@@ -5,6 +5,8 @@ wandb/*
 **/__pycache__/
 **/outputs/*
 VLMEvalKit/outputs/*
+VLMEvalKit/wandb
+VLMEvalKit/output.log
 **/test.*
 VLMEvalKit/config/test.json
 LMUData
