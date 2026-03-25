@@ -1,6 +1,6 @@
 {
     "model": {
-        "BAGEL_sweep_trial8": {
+        "BAGEL_sweep_trial5": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "/root/CLEAR/results/20260209_000155_mix_without_vit/0003000",
@@ -8,24 +8,24 @@
             "is_thinking": true,
             "is_ema": true,
             "output_need_vae": false,
-            "output_need_vit": false,
+            "output_need_vit": true,
             "consider_think": true,
             "verbose_print": false,
             "enable_image_gen_stats": false,
-            "text_temperature": 0.3650211540288323,
-            "do_sample": true,
-            "repetition_penalty": 1.22444144863758,
-            "max_think_token_n": 5062,
-            "max_new_tokns": 1211,
-            "cfg_text_scale": 5.839172657793226,
-            "cfg_img_scale": 1.3224314378170758,
-            "timestep_shift": 2.7480488151956886,
-            "num_timesteps": 52,
-            "cfg_renorm_min": 0.3474494388244048,
-            "max_inter_num": 3,
+            "text_temperature": 0.6066485884103588,
+            "do_sample": false,
+            "repetition_penalty": 1.2011739002719537,
+            "max_think_token_n": 4113,
+            "max_new_tokns": 1019,
+            "cfg_text_scale": 2.62781194795734,
+            "cfg_img_scale": 2.8401520201745623,
+            "timestep_shift": 2.7245216670003845,
+            "num_timesteps": 60,
+            "cfg_renorm_min": 0.9230040143010296,
+            "max_inter_num": 4,
             "cfg_interval": [
-                0.3907940646226671,
-                0.9310474686889746
+                0.3332089400115,
+                0.705503859860216
             ]
         }
     },
