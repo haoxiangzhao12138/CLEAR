@@ -1,17 +1,32 @@
 {
     "model": {
-        "BAGEL": {
+        "BAGEL_sweep_trial0": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260316_125319_no_vit_flow_grpo/checkpoint-350",
             "reasoning_mode": "interleave",
             "is_thinking": false,
             "is_ema": false,
-            "output_need_vae": true,
+            "output_need_vae": false,
             "output_need_vit": false,
-            "consider_think": true,
+            "consider_think": false,
             "verbose_print": false,
-            "enable_image_gen_stats": false
+            "enable_image_gen_stats": false,
+            "text_temperature": 0.5813449227217469,
+            "do_sample": true,
+            "repetition_penalty": 1.0252416575389969,
+            "max_think_token_n": 4372,
+            "max_new_tokns": 1739,
+            "cfg_text_scale": 4.160315440744468,
+            "cfg_img_scale": 2.8260494658673805,
+            "timestep_shift": 1.6450612654190864,
+            "num_timesteps": 29,
+            "cfg_renorm_min": 0.0670343235356694,
+            "max_inter_num": 3,
+            "cfg_interval": [
+                0.26779939105436623,
+                0.6778122450641191
+            ]
         }
     },
     "data": {

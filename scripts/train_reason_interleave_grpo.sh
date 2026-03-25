@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=clear_interleave_rl
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard_bigger_batch
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -42,7 +42,7 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 16 \
+    --gradient_accumulation_steps 64 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \

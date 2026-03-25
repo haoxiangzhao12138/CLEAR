@@ -1,19 +1,27 @@
 #!/usr/bin/env python
-"""Optuna + Wandb offline sweep agent for BagelInference hyperparameter tuning.
+"""Wandb online sweep agent for BagelInference hyperparameter tuning.
 
-Uses Optuna for local Bayesian optimization (TPE sampler) and wandb in offline
-mode for experiment tracking. After all trials complete, run `wandb sync` from
-an internet-connected environment to upload results.
+Uses wandb sweep (online mode) for Bayesian optimization and experiment tracking.
+The sweep dashboard (parallel coordinates, parameter importance, etc.) is
+available at wandb.ai in real time.
+
+Proxy strategy:
+    - The parent process keeps http(s)_proxy set so that wandb can reach the
+      internet through the corporate proxy.
+    - no_proxy covers all intranet domains/IPs so that local model inference
+      is not affected.
+    - The evaluation subprocess (torchrun) inherits a *clean* environment
+      with proxy vars removed, ensuring it always uses the intranet directly.
 
 Usage:
-    # Run with defaults (50 trials)
+    # Create a new sweep and run 50 trials
     python sweep_agent.py
 
-    # Custom number of trials
-    python sweep_agent.py --n_trials 100
+    # Custom trial count
+    python sweep_agent.py --count 100
 
-    # Resume from a previous Optuna study
-    python sweep_agent.py --study_name my_study --storage sqlite:///optuna.db
+    # Resume an existing sweep (grab the sweep ID from wandb UI)
+    python sweep_agent.py --sweep_id <ENTITY/PROJECT/SWEEP_ID>
 """
 
 import argparse
@@ -23,7 +31,6 @@ import os
 import subprocess
 import tempfile
 
-import optuna
 import pandas as pd
 import wandb
 
@@ -36,6 +43,10 @@ BASE_CONFIG_PATH = os.path.join(SCRIPT_DIR, "config", "test.json")
 WORK_DIR = os.path.join(SCRIPT_DIR, "outputs")
 JUDGE = "gpt-4-0125"
 WANDB_PROJECT = "bagel-sweep"
+
+# Proxy for wandb to reach the internet
+PROXY_URL = "http://agent.baidu.com:8891"
+NO_PROXY = "baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com"
 
 # Benchmark type mapping: dataset_name -> "mcq" or "mmvet"
 BENCHMARK_TYPES = {
@@ -67,33 +78,37 @@ MODEL_HYPERPARAMS = [
     "max_inter_num",
 ]
 
+# Env vars related to proxy
+PROXY_ENV_KEYS = [
+    "http_proxy", "HTTP_PROXY",
+    "https_proxy", "HTTPS_PROXY",
+    "no_proxy", "NO_PROXY",
+]
+
 
 # ---------------------------------------------------------------------------
-# Optuna parameter sampling
+# Proxy helpers
 # ---------------------------------------------------------------------------
 
-def suggest_params(trial: optuna.Trial) -> dict:
-    """Sample hyperparameters using Optuna's Bayesian (TPE) sampler."""
-    params = {
-        "text_temperature": trial.suggest_float("text_temperature", 0.1, 1.0),
-        "do_sample": trial.suggest_categorical("do_sample", [True, False]),
-        "repetition_penalty": trial.suggest_float("repetition_penalty", 1.0, 1.5),
-        "max_think_token_n": trial.suggest_int("max_think_token_n", 2048, 8192),
-        "max_new_tokns": trial.suggest_int("max_new_tokns", 512, 2048),
-        "is_thinking": trial.suggest_categorical("is_thinking", [True, False]),
-        "cfg_text_scale": trial.suggest_float("cfg_text_scale", 1.0, 7.0),
-        "cfg_img_scale": trial.suggest_float("cfg_img_scale", 1.0, 3.0),
-        "cfg_interval_low": trial.suggest_float("cfg_interval_low", 0.0, 0.6),
-        "cfg_interval_high": trial.suggest_float("cfg_interval_high", 0.6, 1.0),
-        "timestep_shift": trial.suggest_float("timestep_shift", 1.0, 6.0),
-        "num_timesteps": trial.suggest_int("num_timesteps", 20, 100),
-        "cfg_renorm_min": trial.suggest_float("cfg_renorm_min", 0.0, 1.0),
-        "consider_think": trial.suggest_categorical("consider_think", [True, False]),
-        "output_need_vae": trial.suggest_categorical("output_need_vae", [True, False]),
-        "output_need_vit": trial.suggest_categorical("output_need_vit", [True, False]),
-        "max_inter_num": trial.suggest_int("max_inter_num", 1, 5),
-    }
-    return params
+def setup_proxy():
+    """Set proxy env vars so wandb (and other libs) can reach the internet."""
+    os.environ["http_proxy"] = PROXY_URL
+    os.environ["https_proxy"] = PROXY_URL
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+    os.environ["no_proxy"] = NO_PROXY
+    os.environ["NO_PROXY"] = NO_PROXY
+
+
+def make_clean_env():
+    """Return a copy of os.environ with all proxy vars removed.
+
+    Used for the evaluation subprocess so it runs purely on the intranet.
+    """
+    env = os.environ.copy()
+    for key in PROXY_ENV_KEYS:
+        env.pop(key, None)
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -105,19 +120,15 @@ def build_config(params: dict, trial_number: int) -> tuple[dict, str]:
     with open(BASE_CONFIG_PATH, "r") as f:
         base = json.load(f)
 
-    # Use a unique model name to avoid output dir conflicts between trials
     model_name = f"BAGEL_sweep_trial{trial_number}"
 
-    # Deep-copy the original model entry
     orig_model_cfg = list(base["model"].values())[0]
     model_cfg = copy.deepcopy(orig_model_cfg)
 
-    # Override with trial hyperparams
     for key in MODEL_HYPERPARAMS:
         if key in params:
             model_cfg[key] = params[key]
 
-    # Handle cfg_interval (split into low/high for search, combined as list for config)
     if "cfg_interval_low" in params and "cfg_interval_high" in params:
         model_cfg["cfg_interval"] = [
             params["cfg_interval_low"],
@@ -136,7 +147,11 @@ def build_config(params: dict, trial_number: int) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 
 def run_evaluation(config_path: str) -> int:
-    """Launch the evaluation via torchrun and return the process exit code."""
+    """Launch the evaluation via torchrun and return the process exit code.
+
+    The subprocess runs with proxy env vars stripped so that it stays on the
+    intranet for model inference.
+    """
     cmd = [
         "torchrun",
         "--nproc-per-node=8",
@@ -147,7 +162,8 @@ def run_evaluation(config_path: str) -> int:
         "--verbose",
     ]
     print(f"[sweep] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=SCRIPT_DIR)
+    clean_env = make_clean_env()
+    result = subprocess.run(cmd, cwd=SCRIPT_DIR, env=clean_env)
     return result.returncode
 
 
@@ -156,10 +172,7 @@ def run_evaluation(config_path: str) -> int:
 # ---------------------------------------------------------------------------
 
 def parse_scores(model_name: str) -> dict[str, float]:
-    """Parse benchmark scores from output CSVs.
-
-    Returns a dict of {benchmark_name: score} where score is 0-100 scale.
-    """
+    """Parse benchmark scores from output CSVs."""
     scores = {}
     model_dir = os.path.join(WORK_DIR, model_name)
 
@@ -201,14 +214,35 @@ def parse_scores(model_name: str) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Optuna objective
+# Wandb sweep train function
 # ---------------------------------------------------------------------------
 
-def objective(trial: optuna.Trial) -> float:
-    """Optuna objective function: run one evaluation trial and return avg_score."""
-    params = suggest_params(trial)
-    trial_number = trial.number
+# Global trial counter (wandb.agent calls train() repeatedly)
+_trial_counter = 0
 
+
+def train():
+    """Single trial function called by wandb.agent().
+
+    wandb.agent() handles parameter sampling via the sweep controller.
+    This function:
+      1. Reads params from wandb.config (provided by the sweep controller)
+      2. Builds eval config and runs evaluation (on the intranet, no proxy)
+      3. Logs scores back to wandb (through the proxy)
+    """
+    global _trial_counter
+    trial_number = _trial_counter
+    _trial_counter += 1
+
+    # wandb.init() is called by wandb.agent() before entering train(),
+    # but we call it explicitly to set the run name.
+    run = wandb.init(
+        name=f"trial-{trial_number}",
+        reinit=True,
+    )
+
+    # Read hyperparams from the sweep controller
+    params = dict(wandb.config)
     print(f"\n{'='*60}")
     print(f"[sweep] Trial {trial_number}")
     print(f"[sweep] Params: {json.dumps(params, indent=2, default=str)}")
@@ -226,16 +260,7 @@ def objective(trial: optuna.Trial) -> float:
             json.dump(eval_config, tmp, indent=4)
             tmp_config_path = tmp.name
 
-        # Initialize wandb run in offline mode
-        os.environ["WANDB_MODE"] = "offline"
-        run = wandb.init(
-            project=WANDB_PROJECT,
-            name=f"trial-{trial_number}",
-            config=params,
-            reinit=True,
-        )
-
-        # Run evaluation
+        # Run evaluation (subprocess with proxy stripped)
         exit_code = run_evaluation(tmp_config_path)
         if exit_code != 0:
             print(f"[sweep] WARNING: evaluation exited with code {exit_code}")
@@ -250,7 +275,7 @@ def objective(trial: optuna.Trial) -> float:
             avg_score = 0.0
             print("[sweep] WARNING: no scores parsed, returning avg_score=0")
 
-        # Log to wandb (offline)
+        # Log to wandb (proxy is set in parent process, wandb can reach internet)
         log_dict = {"avg_score": avg_score}
         for dataset_name, score in scores.items():
             log_dict[dataset_name] = score
@@ -260,12 +285,11 @@ def objective(trial: optuna.Trial) -> float:
         print(f"[sweep] Trial {trial_number}: avg_score={avg_score:.2f} "
               f"({len(scores)}/{len(BENCHMARK_TYPES)} benchmarks)")
 
-        wandb.finish()
-        return avg_score
-
     finally:
         if tmp_config_path and os.path.exists(tmp_config_path):
             os.remove(tmp_config_path)
+
+    wandb.finish()
 
 
 # ---------------------------------------------------------------------------
@@ -273,59 +297,63 @@ def objective(trial: optuna.Trial) -> float:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Optuna + wandb offline sweep")
-    parser.add_argument("--n_trials", type=int, default=50,
-                        help="Number of optimization trials (default: 50)")
-    parser.add_argument("--study_name", type=str, default="bagel_sweep",
-                        help="Optuna study name (for resuming)")
-    parser.add_argument("--storage", type=str, default=None,
-                        help="Optuna storage URL, e.g. sqlite:///optuna.db "
-                             "(default: in-memory, not resumable)")
+    parser = argparse.ArgumentParser(
+        description="Wandb online sweep for BagelInference hyperparameter tuning"
+    )
+    parser.add_argument(
+        "--count", type=int, default=50,
+        help="Number of trials to run in this agent (default: 50)",
+    )
+    parser.add_argument(
+        "--sweep_id", type=str, default=None,
+        help="Existing wandb sweep ID to resume (e.g. entity/project/sweep_id). "
+             "If not provided, a new sweep is created from sweep_config.yaml.",
+    )
+    parser.add_argument(
+        "--entity", type=str, default=None,
+        help="Wandb entity (team or username). Uses default if not specified.",
+    )
+    parser.add_argument(
+        "--config", type=str,
+        default=os.path.join(SCRIPT_DIR, "sweep_config.yaml"),
+        help="Path to sweep_config.yaml (default: ./sweep_config.yaml)",
+    )
     args = parser.parse_args()
 
-    # Force wandb offline
-    os.environ["WANDB_MODE"] = "offline"
+    # Set up proxy so wandb can reach the internet
+    setup_proxy()
+    # Remove offline mode if previously set
+    os.environ.pop("WANDB_MODE", None)
 
-    # Create or load Optuna study with TPE (Bayesian) sampler
-    study = optuna.create_study(
-        study_name=args.study_name,
-        storage=args.storage,
-        direction="maximize",
-        sampler=optuna.samplers.TPESampler(),
-        load_if_exists=True,
-    )
+    if args.sweep_id:
+        # Resume an existing sweep
+        sweep_id = args.sweep_id
+        print(f"[sweep] Resuming existing sweep: {sweep_id}")
+    else:
+        # Create a new sweep from config
+        import yaml
+        with open(args.config, "r") as f:
+            sweep_config = yaml.safe_load(f)
 
-    print(f"[sweep] Starting Optuna study '{args.study_name}' "
-          f"with {args.n_trials} trials")
-    print(f"[sweep] Wandb mode: offline (use `wandb sync` to upload later)")
+        sweep_id = wandb.sweep(
+            sweep=sweep_config,
+            project=WANDB_PROJECT,
+            entity=args.entity,
+        )
+        print(f"[sweep] Created new sweep: {sweep_id}")
 
-    study.optimize(objective, n_trials=args.n_trials)
+    print(f"[sweep] Running {args.count} trials")
+    print(f"[sweep] Proxy: {PROXY_URL} (no_proxy: {NO_PROXY})")
+    print(f"[sweep] Evaluation subprocess runs WITHOUT proxy (intranet only)")
+    print(f"[sweep] View sweep dashboard at: https://wandb.ai/sweep/{sweep_id}")
 
-    # Print summary
+    # Start the agent — this blocks until `count` trials are done
+    wandb.agent(sweep_id, function=train, count=args.count)
+
     print(f"\n{'='*60}")
-    print("[sweep] Optimization complete!")
-    print(f"[sweep] Best trial: #{study.best_trial.number}")
-    print(f"[sweep] Best avg_score: {study.best_value:.2f}")
-    print(f"[sweep] Best params:")
-    for key, value in study.best_params.items():
-        print(f"  {key}: {value}")
+    print("[sweep] All trials complete!")
+    print(f"[sweep] View results at: https://wandb.ai/sweep/{sweep_id}")
     print(f"{'='*60}")
-
-    # Save best params to JSON
-    best_params_path = os.path.join(SCRIPT_DIR, "best_params.json")
-    with open(best_params_path, "w") as f:
-        json.dump({
-            "best_trial": study.best_trial.number,
-            "best_avg_score": study.best_value,
-            "best_params": study.best_params,
-        }, f, indent=4)
-    print(f"[sweep] Best params saved to {best_params_path}")
-
-    # Remind about wandb sync
-    wandb_dir = os.path.join(SCRIPT_DIR, "wandb")
-    print(f"\n[sweep] To upload results to wandb, run from an internet-connected env:")
-    print(f"  cd {SCRIPT_DIR}")
-    print(f"  wandb sync --sync-all {wandb_dir}")
 
 
 if __name__ == "__main__":

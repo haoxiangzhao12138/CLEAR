@@ -1,26 +1,34 @@
 #!/bin/bash
-# run_sweep.sh — Run Optuna hyperparameter sweep with wandb offline logging
+# run_sweep.sh — Run wandb online sweep for BagelInference hyperparameter tuning
 #
 # Usage:
-#   bash run_sweep.sh                     # Run 50 trials (default)
-#   bash run_sweep.sh --n_trials 100      # Custom trial count
-#   bash run_sweep.sh --storage sqlite:///optuna.db  # Resumable study
+#   bash run_sweep.sh                                    # New sweep, 50 trials
+#   bash run_sweep.sh --count 100                        # Custom trial count
+#   bash run_sweep.sh --sweep_id entity/project/abc123   # Resume existing sweep
 #
-# After completion, upload wandb results from an internet-connected env:
-#   cd VLMEvalKit && wandb sync --sync-all ./wandb
+# The sweep dashboard (parallel coordinates, parameter importance, etc.)
+# is available at wandb.ai in real time.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Force wandb offline mode (no internet needed during evaluation)
-export WANDB_MODE=offline
+# --- Proxy setup ---
+# wandb needs internet access through the corporate proxy.
+# Evaluation subprocess (torchrun) will have proxy vars stripped automatically
+# by sweep_agent.py, so it always runs on the intranet.
+export http_proxy=http://agent.baidu.com:8891
+export https_proxy=http://agent.baidu.com:8891
+export HTTP_PROXY=http://agent.baidu.com:8891
+export HTTPS_PROXY=http://agent.baidu.com:8891
+export no_proxy=baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com
+export NO_PROXY=baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com
 
-echo "[run_sweep] Starting Optuna sweep (wandb offline mode)"
-echo "[run_sweep] Results will be saved locally. Use 'wandb sync' to upload later."
+# Ensure wandb is NOT in offline mode
+unset WANDB_MODE 2>/dev/null || true
+
+echo "[run_sweep] Starting wandb online sweep"
+echo "[run_sweep] Proxy: $http_proxy"
+echo "[run_sweep] no_proxy: $no_proxy"
 echo ""
 
 python sweep_agent.py "$@"
-
-echo ""
-echo "[run_sweep] Done. To upload wandb results:"
-echo "  cd $(pwd) && wandb sync --sync-all ./wandb"
