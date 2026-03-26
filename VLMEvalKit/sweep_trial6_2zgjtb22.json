@@ -1,31 +1,31 @@
 {
     "model": {
-        "BAGEL_sweep_trial3": {
+        "BAGEL_sweep_trial6": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
             "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260316_125319_no_vit_flow_grpo/checkpoint-350",
             "reasoning_mode": "interleave",
-            "is_thinking": false,
+            "is_thinking": true,
             "is_ema": false,
-            "output_need_vae": true,
+            "output_need_vae": false,
             "output_need_vit": false,
             "consider_think": false,
             "verbose_print": false,
             "enable_image_gen_stats": false,
-            "text_temperature": 0.5690644131124466,
+            "text_temperature": 0.2302234237008647,
             "do_sample": false,
-            "repetition_penalty": 1.497706326844098,
-            "max_think_token_n": 8106,
-            "max_new_tokns": 1156,
-            "cfg_text_scale": 3.8787824501039063,
-            "cfg_img_scale": 1.0978058054386834,
-            "timestep_shift": 4.415593285155817,
-            "num_timesteps": 84,
-            "cfg_renorm_min": 0.5990447023040272,
-            "max_inter_num": 3,
+            "repetition_penalty": 1.1167914386375268,
+            "max_think_token_n": 2842,
+            "max_new_tokns": 1974,
+            "cfg_text_scale": 6.321571114180447,
+            "cfg_img_scale": 2.104235514968692,
+            "timestep_shift": 5.508824470188323,
+            "num_timesteps": 48,
+            "cfg_renorm_min": 0.11212392315011356,
+            "max_inter_num": 5,
             "cfg_interval": [
-                0.020255533689313408,
-                0.7442928100661138
+                0.5092648443814354,
+                0.7471087227022972
             ]
         }
     },
