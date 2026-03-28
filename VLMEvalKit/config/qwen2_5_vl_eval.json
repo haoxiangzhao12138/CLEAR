@@ -1,12 +1,11 @@
 {
     "model": {
-        "BAGEL": {
-            "class": "BagelInference",
-            "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "../models/BAGEL-7B-MoT",
-            "reasoning_mode": "text",
-            "is_thinking": false,
-            "is_ema": true
+        "Qwen2.5-VL-7B-Instruct": {
+            "class": "Qwen2VLChat",
+            "model_path": "/root/Qwen/Qwen2.5-VL-7B-Instruct",
+            "min_pixels": 1003520,
+            "max_pixels": 12845056,
+            "use_custom_prompt": false
         }
     },
     "data": {
@@ -34,6 +33,5 @@
             "class": "ImageMCQDataset",
             "dataset": "RealWorldQA"
         }
-
     }
 }

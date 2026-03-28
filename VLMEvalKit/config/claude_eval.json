@@ -1,0 +1,21 @@
+{
+    "model": {
+        "Claude-Haiku-4-5": {
+            "class": "GPT4V",
+            "model": "claude-haiku-4-5",
+            "temperature": 0,
+            "img_size": -1,
+            "img_detail": "high",
+            "retry": 10,
+            "verbose": true,
+            "api_base": "http://yy.dbh.baidu-int.com/v1/chat/completions",
+            "key": "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
+        }
+    },
+    "data": {
+        "R-Bench-Dis": {
+            "class": "ImageMCQDataset",
+            "dataset": "R-Bench-Dis"
+        }
+    }
+}

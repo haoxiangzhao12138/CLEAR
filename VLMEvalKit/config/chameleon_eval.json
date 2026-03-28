@@ -1,16 +1,8 @@
 {
     "model": {
-        "CLEAR_true_vae": {
-            "class": "BagelInference",
-            "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260324_232801_standard_with_only_KL/checkpoint-200",
-            "reasoning_mode": "interleave",
-            "is_thinking": false,
-            "is_ema": false,
-            "output_need_vae": true,
-            "output_need_vit": false,
-            "verbose_print": false,
-            "enable_image_gen_stats": false
+        "Chameleon-7B": {
+            "class": "Chameleon",
+            "model_path": "<YOUR_CHAMELEON_PATH>"
         }
     },
     "data": {
