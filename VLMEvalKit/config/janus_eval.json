@@ -1,0 +1,62 @@
+{
+    "model": {
+        "Janus-Pro-7B": {
+            "class": "Janus",
+            "model_path": "/root/deepseek-ai/Janus-Pro-7B"
+        }
+    },
+    "data": {
+        "MMBench_DEV_EN_V11": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11"
+        },
+        "MMVet": {
+            "class": "MMVet",
+            "dataset": "MMVet"
+        },
+        "MMVP": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP"
+        },
+        "CV-Bench-2D": {
+            "class": "CVBench",
+            "dataset": "CV-Bench-2D"
+        },
+        "MMStar": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMStar"
+        },
+        "RealWorldQA": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA"
+        },
+        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+        },
+        "MMVet_LOW_LEVEL_HIGH": {
+            "class": "MMVet",
+            "dataset": "MMVet_LOW_LEVEL_HIGH"
+        },
+        "MMVP_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_LOW_LEVEL_HIGH"
+        },
+        "CV-Bench-2D_LOW_LEVEL_HIGH": {
+            "class": "CVBench",
+            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
+        },
+        "MMStar_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMStar_LOW_LEVEL_HIGH"
+        },
+        "RealWorldQA_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
+        },
+        "R-Bench-Dis": {
+            "class": "ImageMCQDataset",
+            "dataset": "R-Bench-Dis"
+        }
+    }
+}

@@ -171,6 +171,71 @@ class InterleaveInferencer:
         return gen_context
 
     @torch.no_grad()
+    def update_context_vae_from_packed_latent(
+        self,
+        packed_latent: torch.Tensor,
+        image_shape,
+        gen_context,
+    ):
+        """
+        Directly update context with already packed latent.
+        Skips vae decode+encode to avoid unnecessary VAE processing.
+        The packed_latent is already in final format: vae2llm(x_t) + timestep_embeds + pos_embed
+        """
+        past_key_values = gen_context["past_key_values"]
+        kv_lens = gen_context["kv_lens"]
+        ropes = gen_context["ropes"]
+
+        H, W = image_shape
+        h = H // self.model.latent_downsample
+        w = W // self.model.latent_downsample
+        num_img_tokens = h * w
+
+        curr_kvlen = kv_lens[0]
+        curr_position_id = ropes[0]
+
+        _curr = curr = 0
+        packed_key_value_indexes = list(range(curr, curr + curr_kvlen))
+        curr += curr_kvlen
+
+        packed_text_ids = [self.new_token_ids["start_of_image"], self.new_token_ids["end_of_image"]]
+        packed_text_indexes = [_curr, _curr + num_img_tokens + 1]
+        packed_indexes = [curr, curr + num_img_tokens + 1]
+        curr += 1
+        _curr += 1
+
+        packed_vae_token_indexes = list(range(_curr, _curr + num_img_tokens))
+        packed_indexes.extend(range(curr, curr + num_img_tokens))
+        curr += num_img_tokens
+        _curr += num_img_tokens
+
+        new_kv_lens = [curr_kvlen + num_img_tokens + 2]
+        new_ropes = [curr_position_id + 1]
+
+        packed_position_ids = [ropes[0]] * (num_img_tokens + 2)
+        packed_seqlens = [num_img_tokens + 2]
+        key_values_lens = kv_lens
+
+        past_key_values = self.model.forward_cache_update_vae_from_packed_latent(
+            past_key_values=past_key_values,
+            packed_latent=packed_latent,
+            packed_vae_token_indexes=torch.tensor(packed_vae_token_indexes, dtype=torch.long, device=self.device),
+            packed_text_ids=torch.tensor(packed_text_ids, dtype=torch.long, device=self.device),
+            packed_text_indexes=torch.tensor(packed_text_indexes, dtype=torch.long, device=self.device),
+            packed_position_ids=torch.tensor(packed_position_ids, dtype=torch.long, device=self.device),
+            packed_seqlens=torch.tensor(packed_seqlens, dtype=torch.int, device=self.device),
+            packed_indexes=torch.tensor(packed_indexes, dtype=torch.long, device=self.device),
+            key_values_lens=torch.tensor(key_values_lens, dtype=torch.int, device=self.device),
+            packed_key_value_indexes=torch.tensor(packed_key_value_indexes, dtype=torch.long, device=self.device),
+        )
+
+        gen_context["kv_lens"] = new_kv_lens
+        gen_context["ropes"] = new_ropes
+        gen_context["past_key_values"] = past_key_values
+
+        return gen_context
+
+    @torch.no_grad()
     def gen_image(
         self,
         image_shape,
@@ -259,7 +324,7 @@ class InterleaveInferencer:
 
         unpacked_latent, unpacked_latent_llm = unpacked_latent
         image = self.decode_image(unpacked_latent[0], image_shape)
-        return image
+        return image, unpacked_latent_llm[0]
 
 
     def decode_image(self, latent, image_shape):
@@ -403,7 +468,7 @@ class InterleaveInferencer:
                     gen_context = self.update_context_text(gen_text, gen_context)
                     output_list.append(gen_text)
 
-                img = self.gen_image(
+                img, _ = self.gen_image(
                     image_shapes,
                     gen_context,
                     cfg_text_precontext=cfg_text_context,
@@ -485,7 +550,7 @@ class InterleaveInferencer:
                 gen_context = self.update_context_text(gen_text, gen_context)
                 output_list.append(gen_text)
 
-            img = self.gen_image(
+            img, _ = self.gen_image(
                 image_shapes,
                 gen_context,
                 cfg_text_precontext=cfg_text_context,
@@ -608,7 +673,7 @@ class InterleaveInferencer:
                     )
                     
                     # 3. 调用图像生成（恢复）工具
-                    img = self.gen_image(
+                    img, packed_latent = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
                         cfg_text_precontext=cfg_text_context,
@@ -627,16 +692,26 @@ class InterleaveInferencer:
 
                     # 根据开关决定是否将生成的图片喂回模型 KV Cache
                     if output_need_vae or output_need_vit:
-                        img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
-                        gen_context = self.update_context_image(
-                            img_processed, gen_context, vae=output_need_vae, vit=output_need_vit
-                        )
+                        # VAE: 直接用 packed_latent 插入上下文（跳过 decode+encode round-trip）
+                        if output_need_vae:
+                            gen_context = self.update_context_vae_from_packed_latent(
+                                packed_latent=packed_latent,
+                                image_shape=image_shapes,
+                                gen_context=gen_context,
+                            )
+                            cfg_text_context = deepcopy(gen_context)
+                            edit_cfg_img_context = deepcopy(gen_context)
 
-                        # 同步更新 CFG 用的上下文
-                        cfg_text_context = deepcopy(gen_context)
-                        edit_cfg_img_context = self.update_context_image(
-                            img_processed, edit_cfg_img_context, vae=output_need_vae, vit=output_need_vit
-                        )
+                        # ViT: 仍需从像素图编码
+                        if output_need_vit:
+                            img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
+                            gen_context = self.update_context_image(
+                                img_processed, gen_context, vae=False, vit=True
+                            )
+                            cfg_text_context = deepcopy(gen_context)
+                            edit_cfg_img_context = self.update_context_image(
+                                img_processed, edit_cfg_img_context, vae=False, vit=True
+                            )
                 else:
                     break
 

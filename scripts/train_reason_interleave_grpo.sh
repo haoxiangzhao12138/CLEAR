@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=clear_interleave_rl
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard_bigger_batch
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard_robin
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -42,7 +42,7 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 64 \
+    --gradient_accumulation_steps 16 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
@@ -62,6 +62,6 @@ torchrun \
     --sde_sigma 1.0 \
     --num_timesteps_train 10 \
     --image_loss_weight 0.5 \
-    --trajectory_selection_strategy weighted \
+    --trajectory_selection_strategy round_robin \
     --separate_image_rewards False \
     --decision_reward_smooth False

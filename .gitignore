@@ -13,3 +13,4 @@ LMUData
 visualizations/*
 CLAUDE.md
 .claude/settings.local.json
+VLMEvalKit/sweep_*

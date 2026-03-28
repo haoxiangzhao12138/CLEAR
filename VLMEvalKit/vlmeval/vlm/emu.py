@@ -166,9 +166,20 @@ class Emu3_chat(BaseModel):
             )
 
             local_root = get_local_root(model_path)
-            sys.path.append(local_root)
-            from processing_emu3 import Emu3Processor
-            from configuration_emu3 import Emu3Config
+            sys.path.insert(0, local_root)
+            # Import modules without relative imports first
+            import configuration_emu3
+            import utils_emu3  # noqa: F401
+            Emu3Config = configuration_emu3.Emu3Config
+            # processing_emu3 has "from .utils_emu3 import ..." which fails
+            # when imported as a top-level module. Load it with patched source.
+            import types as _types
+            _src = open(osp.join(local_root, 'processing_emu3.py')).read()
+            _src = _src.replace('from .utils_emu3', 'from utils_emu3')
+            _mod = _types.ModuleType('processing_emu3')
+            _mod.__file__ = osp.join(local_root, 'processing_emu3.py')
+            exec(compile(_src, _mod.__file__, 'exec'), _mod.__dict__)
+            Emu3Processor = _mod.Emu3Processor
         except Exception as err:
             raise err
 
