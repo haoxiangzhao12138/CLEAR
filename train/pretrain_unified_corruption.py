@@ -324,6 +324,10 @@ class TrainingArguments:
         default=1.0,
         metadata={"help": "Scaling factor for the language cross-entropy loss term."},
     )
+    distill_weight: float = field(
+        default=0.0,
+        metadata={"help": "Scaling factor for ViT-VAE feature distillation loss."},
+    )
     ce_loss_reweighting: bool = field(
         default=False,
         metadata={
@@ -854,6 +858,22 @@ def main():
         else:
             loss_dict["mse"] = torch.tensor(0.0, device=device)
             total_mse_tokens = torch.tensor(0, device=device)
+
+        # Distillation loss (ViT → VAE)
+        if training_args.distill_weight > 0:
+            distill = loss_dict.get("distill", None)
+            # All ranks must participate in all_reduce, even if this rank has no pairs
+            num_pairs = len(distill) if distill is not None else 0
+            total_distill_pairs = torch.tensor(num_pairs, device=device)
+            dist.all_reduce(total_distill_pairs, op=dist.ReduceOp.SUM)
+            if num_pairs > 0 and total_distill_pairs > 0:
+                distill_reduced = distill.sum() * dist.get_world_size() / total_distill_pairs
+                loss_dict["distill"] = distill_reduced.detach()
+                loss = loss + distill_reduced * training_args.distill_weight
+            else:
+                loss_dict["distill"] = torch.tensor(0.0, device=device)
+        else:
+            loss_dict["distill"] = torch.tensor(0.0, device=device)
 
         optimizer.zero_grad()
         loss.backward()

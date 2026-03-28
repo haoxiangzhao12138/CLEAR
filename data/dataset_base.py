@@ -203,6 +203,7 @@ class PackedDataset(torch.utils.data.IterableDataset):
             vit_token_seqlens=list(),
             packed_vit_position_ids=list(),
             packed_vit_token_indexes=list(),
+            distill_pairs=list(),
         )
         return sequence_status
 
@@ -268,6 +269,12 @@ class PackedDataset(torch.utils.data.IterableDataset):
             data["packed_label_ids"] = torch.tensor(sequence_status["packed_label_ids"])
             data["ce_loss_indexes"] = torch.tensor(sequence_status["ce_loss_indexes"])
             data["ce_loss_weights"] = torch.tensor(sequence_status["ce_loss_weights"])
+
+        # distillation pairs (ViT → VAE)
+        if len(sequence_status["distill_pairs"]) > 0:
+            data["distill_pairs"] = torch.tensor(
+                sequence_status["distill_pairs"], dtype=torch.long
+            )  # shape (N, 2): [vit_img_idx, vae_img_idx]
 
         return data
 
@@ -357,6 +364,10 @@ class PackedDataset(torch.utils.data.IterableDataset):
         curr_rope_id = 0
         sample_lens = 0
 
+        # Distillation pair tracking for this sample
+        vit_pair_map = {}   # distill_pair_id -> global vit image index
+        vae_pair_map = {}   # distill_pair_id -> global vae image index
+
         for item in sequence_plan:
             split_start = item.get("split_start", True)
             if split_start:
@@ -442,6 +453,12 @@ class PackedDataset(torch.utils.data.IterableDataset):
                     )
                 )
 
+                # Track distillation pair (ViT side)
+                dpid = item.get("distill_pair_id", -1)
+                if dpid >= 0:
+                    vit_img_idx = len(sequence_status["vit_token_seqlens"]) - 1
+                    vit_pair_map[dpid] = vit_img_idx
+
                 # add a <|endofimage|> token
                 sequence_status["packed_text_ids"].append(self.end_of_image)
                 sequence_status["packed_text_indexes"].append(curr)
@@ -491,6 +508,12 @@ class PackedDataset(torch.utils.data.IterableDataset):
                 h = H // self.data_config.vae_image_downsample
                 w = W // self.data_config.vae_image_downsample
                 sequence_status["vae_latent_shapes"].append((h, w))
+
+                # Track distillation pair (VAE conditioning side, loss=0 only)
+                dpid = item.get("distill_pair_id", -1)
+                if dpid >= 0 and item["loss"] == 0:
+                    vae_img_idx = len(sequence_status["vae_latent_shapes"]) - 1
+                    vae_pair_map[dpid] = vae_img_idx
 
                 num_img_tokens = w * h
                 sequence_status["packed_vae_token_indexes"].extend(
@@ -542,6 +565,14 @@ class PackedDataset(torch.utils.data.IterableDataset):
 
         sequence_status["curr"] = curr
         sequence_status["sample_lens"].append(sample_lens)
+
+        # Collect distillation pairs: intersect vit_pair_map and vae_pair_map
+        for dpid in vit_pair_map:
+            if dpid in vae_pair_map:
+                sequence_status["distill_pairs"].append(
+                    [vit_pair_map[dpid], vae_pair_map[dpid]]
+                )
+
         # prepare attention mask
         if not self.use_flex:
             sequence_status["nested_attention_masks"].append(
@@ -593,6 +624,9 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = data["ce_loss_indexes"]
             self.ce_loss_weights = data["ce_loss_weights"]
 
+        if "distill_pairs" in data.keys():
+            self.distill_pairs = data["distill_pairs"]
+
     def pin_memory(self):
         self.packed_text_ids = self.packed_text_ids.pin_memory()
         self.packed_text_indexes = self.packed_text_indexes.pin_memory()
@@ -625,6 +659,9 @@ class SimpleCustomBatch:
             self.ce_loss_indexes = self.ce_loss_indexes.pin_memory()
             self.ce_loss_weights = self.ce_loss_weights.pin_memory()
 
+        if hasattr(self, "distill_pairs"):
+            self.distill_pairs = self.distill_pairs.pin_memory()
+
         return self
 
     def cuda(self, device):
@@ -656,6 +693,9 @@ class SimpleCustomBatch:
             self.packed_label_ids = self.packed_label_ids.to(device)
             self.ce_loss_indexes = self.ce_loss_indexes.to(device)
             self.ce_loss_weights = self.ce_loss_weights.to(device)
+
+        if hasattr(self, "distill_pairs"):
+            self.distill_pairs = self.distill_pairs.to(device)
 
         return self
 
@@ -695,6 +735,9 @@ class SimpleCustomBatch:
             data["packed_label_ids"] = self.packed_label_ids
             data["ce_loss_indexes"] = self.ce_loss_indexes
             data["ce_loss_weights"] = self.ce_loss_weights
+
+        if hasattr(self, "distill_pairs"):
+            data["distill_pairs"] = self.distill_pairs
 
         return data
 

@@ -22,6 +22,7 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
             "text_ids_list": [],
             "image_tensor_list": [],
             "num_tokens": 0,
+            "_next_pair_id": 0,
         }
         return data
 
@@ -43,6 +44,14 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
     def _add_image(self, data, image, need_loss, need_vae, need_vit, enable_cfg=True):
         assert need_loss or need_vae or need_vit
 
+        # Determine if this call qualifies for distillation pairing:
+        # only when all three flags are True (clean output image in tool-use)
+        should_pair = need_loss and need_vae and need_vit
+        if should_pair:
+            pair_id = data["_next_pair_id"]
+        else:
+            pair_id = -1
+
         if need_loss:
             data["sequence_plan"].append(
                 {
@@ -51,6 +60,7 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
                     "loss": 1,
                     "special_token_loss": 0,
                     "special_token_label": None,
+                    "distill_pair_id": -1,
                 }
             )
             image_tensor = self.transform(image)
@@ -66,6 +76,7 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
                     "loss": 0,
                     "special_token_loss": 0,
                     "special_token_label": None,
+                    "distill_pair_id": pair_id,
                 }
             )
 
@@ -82,12 +93,17 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
                     "loss": 0,
                     "special_token_loss": 0,
                     "special_token_label": None,
+                    "distill_pair_id": pair_id,
                 },
             )
             vit_image_tensor = self.vit_transform(image)
             height, width = vit_image_tensor.shape[1:]
             data["num_tokens"] += width * height // self.vit_transform.stride**2
             data["image_tensor_list"].append(vit_image_tensor)
+
+        if should_pair:
+            data["_next_pair_id"] += 1
+
         return data
 
     def _add_video(

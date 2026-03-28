@@ -1,12 +1,12 @@
 {
     "model": {
-        "CLEAR_RL": {
+        "CLEAR_RL_TEXT": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260323_113459_standard_separate_reward/checkpoint-200",
+            "model_param_path": "/root/CLEAR/results/20260209_000155_mix_without_vit/0003000",
             "reasoning_mode": "interleave",
             "is_thinking": false,
-            "is_ema": false,
+            "is_ema": true,
             "output_need_vae": true,
             "output_need_vit": false,
             "verbose_print": false,
@@ -14,33 +14,33 @@
         }
     },
     "data": {
-        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+        "MME": {
+            "class": "ImageYORNDataset",
+            "dataset": "MME"
         },
-        "MMVet_LOW_LEVEL_HIGH": {
+        "MMBench_DEV_EN_V11": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11"
+        },
+        "MMVet": {
             "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_HIGH"
+            "dataset": "MMVet"
         },
-        "MMVP_LOW_LEVEL_HIGH": {
+        "MMVP": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_HIGH"
+            "dataset": "MMVP"
         },
-        "CV-Bench-2D_LOW_LEVEL_HIGH": {
+        "CV-Bench-2D": {
             "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
+            "dataset": "CV-Bench-2D"
         },
-        "MMStar_LOW_LEVEL_HIGH": {
+        "MMStar": {
             "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_HIGH"
+            "dataset": "MMStar"
         },
-        "RealWorldQA_LOW_LEVEL_HIGH": {
+        "RealWorldQA": {
             "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
-        },
-        "R-Bench-Dis": {
-            "class": "ImageMCQDataset",
-            "dataset": "R-Bench-Dis"
+            "dataset": "RealWorldQA"
         }
     }
 }

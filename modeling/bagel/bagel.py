@@ -136,6 +136,7 @@ class Bagel(PreTrainedModel):
         packed_vae_token_indexes: Optional[torch.LongTensor] = None,
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
+        distill_pairs: Optional[torch.LongTensor] = None,  # shape (N, 2): [vit_img_idx, vae_img_idx]
     ) -> torch.Tensor:
         
         device = packed_text_ids.device
@@ -284,6 +285,25 @@ class Bagel(PreTrainedModel):
             **extra_inputs,
         )
 
+        # 6.5. Distillation Loss (ViT → VAE)
+        distill = None
+        if distill_pairs is not None and len(distill_pairs) > 0:
+            vit_splits = torch.split(
+                packed_vit_token_indexes, vit_token_seqlens.tolist()
+            )
+            vae_token_counts = [h * w for h, w in patchified_vae_latent_shapes]
+            vae_splits = torch.split(packed_vae_token_indexes, vae_token_counts)
+
+            distill_losses = []
+            for vit_idx, vae_idx in distill_pairs:
+                vit_pooled = last_hidden_state[vit_splits[vit_idx]].mean(dim=0)
+                vae_pooled = last_hidden_state[vae_splits[vae_idx]].mean(dim=0)
+                # ViT is teacher: detach so no gradient flows to ViT branch
+                distill_losses.append(
+                    ((vit_pooled.detach() - vae_pooled) ** 2).mean()
+                )
+            distill = torch.stack(distill_losses)
+
         # 7. MSE Loss Calculation (Output Side)
         mse = None
         if self.config.visual_gen:
@@ -318,7 +338,7 @@ class Bagel(PreTrainedModel):
                 d_ce = self.language_model.lm_head(last_hidden_state[0:1])
                 ce = d_ce.sum() * 0.0
 
-        return dict(mse=mse, ce=ce)
+        return dict(mse=mse, ce=ce, distill=distill)
 
     def forward_logits(
         self,

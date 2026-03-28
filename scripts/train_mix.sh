@@ -14,7 +14,8 @@ torchrun \
   --master_port=23457 \
   train/pretrain_unified_corruption.py \
   --dataset_config_file ./data/configs/corruption_mix.yaml \
-  --output_need_vit False \
+  --output_need_vit True \
+  --distill_weight 0.1 \
   --checkpoint_dir "./results/${run_id}" \
   --model_path ./models/BAGEL-7B-MoT \
   --layer_module Qwen2MoTDecoderLayer \
