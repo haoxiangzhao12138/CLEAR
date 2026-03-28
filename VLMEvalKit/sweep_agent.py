@@ -61,21 +61,13 @@ BENCHMARK_TYPES = {
 
 # Hyperparameters that map directly into the model config dict
 MODEL_HYPERPARAMS = [
-    "text_temperature",
-    "do_sample",
     "repetition_penalty",
-    "max_think_token_n",
-    "max_new_tokns",
-    "is_thinking",
     "cfg_text_scale",
     "cfg_img_scale",
     "timestep_shift",
     "num_timesteps",
     "cfg_renorm_min",
     "consider_think",
-    "output_need_vae",
-    "output_need_vit",
-    "max_inter_num",
 ]
 
 # Env vars related to proxy
