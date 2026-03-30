@@ -618,26 +618,15 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 在多 GPU/多进程设置中，收集所有进程的奖励分数
         rewards_per_func = gather(rewards_per_func)
         # Apply weights to each reward function's output and sum
-        # 修改后的聚合方式：
-        # 1. 使用固定权重，不再按实际参与维度归一化
-        # 2. 给不生图的样本（latent_quality 为 NaN）添加轻微惩罚，鼓励生成
+        # 以答案正确性为核心的奖励聚合：
+        # - 不再使用 no_image_penalty（由 decision_reward 独立负责是否生成的决策）
+        # - NaN 值（如未生成图像时的 latent_quality）替换为 0，不额外惩罚
         weights = self.reward_weights.to(device).unsqueeze(0)           # (1, num_funcs)
         weighted = rewards_per_func * weights                           # (N, num_funcs)
+        weighted = weighted.nan_to_num(0.0)
 
-        # 检查 latent_quality 是否存在（通常是最后一个 reward）
-        has_latent_quality = "latent_quality" in self.reward_func_names
-        if has_latent_quality:
-            latent_idx = self.reward_func_names.index("latent_quality")
-            # 不生图的样本：latent_quality 为 NaN，给 -0.1 惩罚
-            latent_mask = ~torch.isnan(rewards_per_func[:, latent_idx])  # True = 有生图
-            no_image_penalty = (~latent_mask) * (-0.1)  # 惩罚不生图的样本
-            weighted = weighted.nan_to_num(0.0)
-        else:
-            no_image_penalty = 0.0
-            weighted = weighted.nan_to_num(0.0)
-
-        # 计算总奖励（固定权重，不除以 weight_sum）
-        rewards = weighted.sum(dim=1) + no_image_penalty  # (N,)
+        # 计算总奖励
+        rewards = weighted.sum(dim=1)  # (N,)
 
         # Compute grouped-wise rewards (按组计算均值和标准差)
         # 将奖励重塑为 (num_unique_prompts, num_generations_per_prompt)
@@ -1031,14 +1020,16 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         mu_new = x_t - drift * dt_val
                         variance = sde_sigma ** 2 * dt_val
 
-                        # Compute log probability with correct normalization
-                        # Use .sum() instead of .mean() for correct log probability in GRPO
-                        # The ratio exp(log_p_new - log_p_old) is invariant to constant terms,
-                        # but using sum() ensures proper gradient scaling
+                        # Compute log probability with per-element mean normalization
+                        # 使用 .mean() 而非 .sum()：
+                        #   数学上 ratio = exp(log_p_new - log_p_old) 只要两端一致就正确
+                        #   但 .sum() 会让梯度量级 ∝ D (latent 维度数 ~65536)
+                        #   而 text loss 是 per-token mean，梯度量级 ∝ 1
+                        #   用 .mean() 让 image 梯度量级与 text 对齐，训练更稳定
                         sq_error = ((x_next - mu_new) ** 2 / variance)
                         # Clip squared error to prevent overflow/explosion
                         sq_error = torch.clamp(sq_error, min=-1e8, max=1e8)
-                        log_p_new = -0.5 * sq_error.sum()
+                        log_p_new = -0.5 * sq_error.mean()
 
                         if self.num_iterations > 1:
                             log_p_old = torch.tensor(chosen_step['log_prob_old'], device=device)

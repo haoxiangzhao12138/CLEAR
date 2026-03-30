@@ -1403,14 +1403,9 @@ class Bagel(PreTrainedModel):
                 # Record trajectory
                 if record_trajectory:
                     # Gaussian transition: x_next ~ N(mu, variance)
-                    # For D-dimensional latent space:
-                    #   log p(x_next | x_t) = -0.5 * D * log(2π) - 0.5 * log|Σ| - 0.5 * (x-μ)^T Σ^{-1} (x-μ)
-                    # With isotropic variance Σ = σ² * I * dt:
-                    #   log p(x_next | x_t) = -0.5 * ((x_next - mu)^2 / variance).sum() - 0.5 * D * log(2π * variance)
-                    #
-                    # The constant term -0.5 * D * log(2π * variance) cancels out when computing
-                    # the ratio exp(log_p_new / log_p_old) in GRPO, so we omit it.
-                    # We use .sum() instead of .mean() for correct normalization.
+                    # 使用 .mean() 归一化 log-prob（与训练端一致）：
+                    #   ratio = exp(log_p_new - log_p_old) 只要两端归一化一致就数学正确
+                    #   .mean() 让梯度量级与 text GRPO 的 per-token mean 对齐
                     mu = x_t - drift * dt
                     variance = sde_sigma ** 2 * dt
 
@@ -1418,7 +1413,7 @@ class Bagel(PreTrainedModel):
                     sq_error = ((x_next - mu) ** 2 / variance)
                     sq_error = torch.clamp(sq_error, min=-1e8, max=1e8)
 
-                    log_prob_old = -0.5 * sq_error.sum()
+                    log_prob_old = -0.5 * sq_error.mean()
 
                     trajectory.append({
                         'x_t': x_t.detach().cpu(),

@@ -289,25 +289,28 @@ class InterleaveInferencer:
                 "cfg_packed_key_value_indexes": None,
             }
 
-        # Dual generation mode: 50-step ODE for quality image + 10-step SDE for trajectory
+        # RL training mode: single SDE pass for both image generation AND trajectory recording
+        # 训练时用 SDE 统一生成和轨迹记录，确保 reward 和训练分布一致：
+        #   - SDE 生成的图像通过 Bridge 注入 context → 模型推理 → reward
+        #   - 同一条 SDE 轨迹用于 Flow-GRPO 训练
+        #   - 评测时（sde_sigma=0）走下面的 else 分支，用 ODE 生成高质量图像
         if record_trajectory and sde_sigma > 0:
-            # Save initial noise (generate_image modifies x_t in-place)
-            saved_noise = generation_input["packed_init_noises"].clone()
-
-            # 1. ODE generation → high quality image (for decode + reward + continued reasoning)
-            #    KV cache is read-only (update_past_key_values=False), not modified
-            unpacked_latent, unpacked_latent_llm = self.model.generate_image(
+            # SDE generation with trajectory recording
+            # 无 CFG（SDE 模式下 cfg 已在上方设为 1.0）
+            unpacked_latent, unpacked_latent_llm, trajectory = self.model.generate_image_with_trajectory(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=cfg_text_past_key_values,
                 cfg_img_past_key_values=cfg_img_past_key_values,
-                num_timesteps=num_timesteps,
+                num_timesteps=num_timesteps_sde,
                 cfg_text_scale=cfg_text_scale_,
                 cfg_img_scale=cfg_img_scale_,
                 cfg_interval=cfg_interval,
                 cfg_renorm_min=cfg_renorm_min,
                 cfg_renorm_type=cfg_renorm_type,
                 timestep_shift=timestep_shift,
-                cfg_type="parallel",
+                sde_sigma=sde_sigma,
+                record_trajectory=True,
+                gen_context=gen_context,
                 **generation_input,
                 cfg_text_packed_position_ids=generation_input_cfg_text[
                     "cfg_packed_position_ids"
@@ -331,35 +334,7 @@ class InterleaveInferencer:
                 ],
             )
 
-            # 2. SDE generation → trajectory (for Flow-GRPO training)
-            generation_input["packed_init_noises"] = saved_noise
-            _, _, trajectory = self.model.generate_image_with_trajectory(
-                past_key_values=past_key_values,
-                cfg_text_past_key_values=None,
-                cfg_img_past_key_values=None,
-                num_timesteps=num_timesteps_sde,
-                cfg_text_scale=1.0,
-                cfg_img_scale=1.0,
-                cfg_interval=cfg_interval,
-                cfg_renorm_min=cfg_renorm_min,
-                cfg_renorm_type=cfg_renorm_type,
-                timestep_shift=timestep_shift,
-                sde_sigma=sde_sigma,
-                record_trajectory=True,
-                gen_context=gen_context,
-                **generation_input,
-                cfg_text_packed_position_ids=None,
-                cfg_text_packed_query_indexes=None,
-                cfg_text_key_values_lens=None,
-                cfg_text_packed_key_value_indexes=None,
-                cfg_img_packed_position_ids=None,
-                cfg_img_packed_query_indexes=None,
-                cfg_img_key_values_lens=None,
-                cfg_img_packed_key_value_indexes=None,
-            )
-
             image = self.decode_image(unpacked_latent[0], image_shape)
-            # Return both: raw_latent for decode, packed_latent for direct context update
             return image, trajectory, unpacked_latent[0], unpacked_latent_llm[0]
         else:
             # Single call: original logic (ODE or SDE depending on sde_sigma)

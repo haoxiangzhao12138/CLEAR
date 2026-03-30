@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=clear_interleave_rl
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_standard_robin
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_new_SDE_debug
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -22,13 +22,11 @@ torchrun \
     --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
     --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
     --clean_image_root /root/CLEAR/datasets/processed_dataset/rl/images/ \
-    --mse_scale 0.3 \
-    --latent_reward_mode vae \
-    --reward_funcs accuracy format decision latent_quality \
+    --reward_funcs accuracy format decision \
     --enable_reward_accuracy True \
     --enable_reward_format True \
     --enable_reward_decision True \
-    --enable_reward_latent_quality True \
+    --enable_reward_latent_quality False \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
@@ -37,7 +35,7 @@ torchrun \
     --lr_scheduler_type cosine \
     --num_iterations 1 \
     --num_generations 8 \
-    --beta 0.0 \
+    --beta 0.04 \
     --num_timesteps 30 \
     --mask_truncated_completions false \
     --use_liger_kernel false \
@@ -52,16 +50,16 @@ torchrun \
     --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
+    --model_param_path /root/CLEAR/results/20260328_215133_clear_sft_drop_vit/0000600 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \
     --max_num_tokens 16384 \
     --use_text_grpo True \
     --use_flow_grpo True \
-    --sde_sigma 1.0 \
-    --num_timesteps_train 10 \
-    --image_loss_weight 0.5 \
+    --sde_sigma 0.3 \
+    --num_timesteps_train 20 \
+    --image_loss_weight 1.0 \
     --trajectory_selection_strategy round_robin \
     --separate_image_rewards False \
     --decision_reward_smooth False

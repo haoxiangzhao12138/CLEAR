@@ -1,9 +1,9 @@
 {
     "model": {
-        "CLEAR_RL_TEXT": {
+        "CLEAR_distill": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/20260209_000155_mix_without_vit/0003000",
+            "model_param_path": "/root/CLEAR/results/20260328_215133_clear_sft_drop_vit/0000600",
             "reasoning_mode": "interleave",
             "is_thinking": false,
             "is_ema": true,
@@ -14,10 +14,6 @@
         }
     },
     "data": {
-        "MME": {
-            "class": "ImageYORNDataset",
-            "dataset": "MME"
-        },
         "MMBench_DEV_EN_V11": {
             "class": "ImageMCQDataset",
             "dataset": "MMBench_DEV_EN_V11"
@@ -41,6 +37,30 @@
         "RealWorldQA": {
             "class": "ImageMCQDataset",
             "dataset": "RealWorldQA"
+        },
+        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+        },
+        "MMVet_LOW_LEVEL_HIGH": {
+            "class": "MMVet",
+            "dataset": "MMVet_LOW_LEVEL_HIGH"
+        },
+        "MMVP_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_LOW_LEVEL_HIGH"
+        },
+        "CV-Bench-2D_LOW_LEVEL_HIGH": {
+            "class": "CVBench",
+            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
+        },
+        "MMStar_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMStar_LOW_LEVEL_HIGH"
+        },
+        "RealWorldQA_LOW_LEVEL_HIGH": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
         }
     }
 }

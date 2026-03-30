@@ -197,6 +197,7 @@ class OutputTransfer:
                 text_ids = text_ids_list.pop(0)
 
                 shifted_text_ids = [self.bos_token_id] + text_ids
+                next_token_labels = text_ids + [self.eos_token_id]  # next-token targets for causal LM
                 sequence_status["packed_text_ids"].extend(shifted_text_ids)
                 sequence_status["packed_text_indexes"].extend(
                     range(curr, curr + len(shifted_text_ids))
@@ -205,7 +206,7 @@ class OutputTransfer:
                     sequence_status["ce_loss_indexes"].extend(
                         range(curr, curr + len(shifted_text_ids))
                     )
-                    sequence_status["ce_loss_text_ids"].extend(shifted_text_ids)
+                    sequence_status["ce_loss_text_ids"].extend(next_token_labels)
                 curr += len(shifted_text_ids)
                 curr_split_len += len(shifted_text_ids)
 

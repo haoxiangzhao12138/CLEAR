@@ -71,7 +71,7 @@ class GRPOScriptArguments(ScriptArguments):
     """
 
     reward_funcs: list[str] = field(
-        default_factory=lambda: ["accuracy", "format", "decision", "latent_quality"],
+        default_factory=lambda: ["accuracy", "format", "decision"],
         metadata={
             "help": "List of reward functions. Possible values: 'accuracy', 'format', 'decision', 'latent_quality'"
         },
@@ -371,26 +371,26 @@ def decision_reward_auto(completions, solution, question, **kwargs):
     基于结果回溯的策略决策奖励（无需难度标签）。
     复用 accuracy_reward_v2 缓存的 LLM judge 结果来判断是否答对。
 
-    逻辑矩阵（原始值）：
+    核心设计原则：
+    - 训练数据全部是退化图像，模型应该更积极地尝试生成
+    - 不生成+答错 给负惩罚，迫使模型在不确定时倾向生成
+    - 生成+答错 仍给正奖励，鼓励探索
+
+    逻辑矩阵（原始值，_decision_reward_smooth=False）：
     | 是否恢复 | 是否答对 | 奖励 | 原因 |
     |----------|----------|------|------|
     | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
-    | 没恢复   | 答对了   | 0.6  | 直接答对，但不一定是最优策略 |
-    | 恢复了   | 没答对   | 0.3  | 尝试了工具，鼓励探索（原0.1提高）|
-    | 没恢复   | 没答对   | 0.0  | 最差：应该生成但没生成 |
-
-    调整说明：
-    - 提高生成但答错的奖励：0.1 → 0.3（鼓励模型尝试生成）
-    - 降低不生成但答对的奖励：0.8 → 0.6（避免模型过于保守）
-    - 这样模型会更愿意在不确定时尝试生成图片
+    | 没恢复   | 答对了   | 0.6  | 不错，但未必是最优策略 |
+    | 恢复了   | 没答对   | 0.4  | 鼓励探索，尝试了就值得 |
+    | 没恢复   | 没答对   | -0.2 | 应该生成但没生成，需要惩罚 |
 
     逻辑矩阵（平滑值，_decision_reward_smooth=True）：
     | 是否恢复 | 是否答对 | 奖励 | 原因 |
     |----------|----------|------|------|
     | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
-    | 没恢复   | 答对了   | 0.9  | 高质量：无需工具也能答对 |
-    | 恢复了   | 没答对   | 0.5  | 中等：尝试了但没答对，值得鼓励 |
-    | 没恢复   | 没答对   | 0.0  | 最差 |
+    | 没恢复   | 答对了   | 0.5  | 可以，但鼓励更积极生成 |
+    | 恢复了   | 没答对   | 0.5  | 中等：尝试了就值得鼓励 |
+    | 没恢复   | 没答对   | -0.2 | 最差：应该生成但没生成 |
 
     注意：reward_funcs 列表中 accuracy 必须排在 decision 前面，
     这样 _accuracy_cache 在本函数执行时已有数据。
@@ -414,23 +414,23 @@ def decision_reward_auto(completions, solution, question, **kwargs):
         if use_smooth:
             # 平滑奖励曲线
             if did_restore and correct:
-                rewards.append(1.0)      # 最优
+                rewards.append(1.0)       # 最优
             elif not did_restore and correct:
-                rewards.append(0.9)      # 高质量
+                rewards.append(0.5)       # 可以，但鼓励更积极
             elif did_restore and not correct:
-                rewards.append(0.5)      # 中等，值得鼓励
+                rewards.append(0.5)       # 尝试了就值得鼓励
             else:
-                rewards.append(0.0)      # 最差
+                rewards.append(-0.2)      # 应该生成但没生成
         else:
             # 原始奖励曲线
             if did_restore and correct:
                 rewards.append(1.0)
             elif not did_restore and correct:
-                rewards.append(0.8)
+                rewards.append(0.6)
             elif did_restore and not correct:
-                rewards.append(0.1)
+                rewards.append(0.4)
             else:
-                rewards.append(0.0)
+                rewards.append(-0.2)
 
     return rewards
 
@@ -627,11 +627,12 @@ def _call_llm_judge(completions, solutions, questions):
     api_key = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.
-    Your task is to compare the predicted answer with the correct answer and determine if they match meaningfully. Here's how you can accomplish the task:
+    Your task is to compare the predicted answer with the correct answer and rate the correctness on a continuous scale. Here's how you can accomplish the task:
     INSTRUCTIONS:
     - Focus on the meaningful match between the predicted answer and the correct answer.
     - Consider synonyms or paraphrases as valid matches.
     - Evaluate the correctness of the prediction compared to the answer.
+    - Rate the correctness from 0.0 (completely wrong) to 1.0 (perfectly correct).
     """
     user_prompt_template = """
     I will give you a question related to an image and the following text as inputs:
@@ -641,19 +642,21 @@ def _call_llm_judge(completions, solutions, questions):
     Your task is to evaluate the model's predicted answer against the ground truth answer, based on the context provided by the question related to the image. Consider the following criteria for evaluation:
     - **Relevance**: Does the predicted answer directly address the question posed, considering the information provided by the given question?
     - **Accuracy**: Compare the predicted answer to the ground truth answer. You need to evaluate from the following two perspectives:
-    (1) If the ground truth answer is open-ended, consider whether the prediction accurately reflects the information given in the ground truth without introducing factual inaccuracies. If it does, the prediction should be considered correct.
-    (2) If the ground truth answer is a definitive answer, strictly compare the model's prediction to the actual answer. Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's prediction should be deemed correct.
+    (1) If the ground truth answer is open-ended, consider whether the prediction accurately reflects the information given in the ground truth without introducing factual inaccuracies. If it does, the prediction should receive a high score.
+    (2) If the ground truth answer is a definitive answer, strictly compare the model's prediction to the actual answer. Pay attention to unit conversions such as length and angle, etc. As long as the results are consistent, the model's prediction should receive a high score.
 
     **Output Format**:
-    Your response should only include True or False indicating the correctness of the prediction: True for correct and False for incorrect. Note that True means the model's prediction strictly aligns with the ground truth, while False means it does not.
-    The format should be flagged: True or False
+    Rate the correctness of the prediction on a scale from 0.0 to 1.0, where 0.0 means completely incorrect and 1.0 means perfectly correct. Consider partial correctness for answers that are close but not exact.
+    Your response should ONLY contain a single line in the following format:
+    Score: <float between 0.0 and 1.0>
+    Example: Score: 0.85
     """
     max_retries = 3
     timeout = 30
     max_workers = 64
     model = "gpt-4.1"
 
-    def process_single(prompt: str) -> bool:
+    def process_single(prompt: str) -> float:
         client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         messages = [
             {"role": "system", "content": system_prompt},
@@ -665,20 +668,31 @@ def _call_llm_judge(completions, solutions, questions):
                     model=model, messages=messages, max_tokens=512, temperature=0.0, n=1,
                 )
                 content = response.choices[0].message.content.strip().lower()
-                if content == "true":
-                    return True
-                elif content == "false":
-                    return False
+                # Parse "Score: 0.85" format
+                match = re.search(r'score:\s*([\d.]+)', content)
+                if match:
+                    score = float(match.group(1))
+                    return max(0.0, min(1.0, score))  # clamp to [0, 1]
+                # Fallback: try to parse any float
+                match = re.search(r'([\d.]+)', content)
+                if match:
+                    score = float(match.group(1))
+                    return max(0.0, min(1.0, score))
+                # Fallback: handle legacy True/False responses
+                if "true" in content:
+                    return 1.0
+                elif "false" in content:
+                    return 0.0
             except (APIConnectionError, RateLimitError, APIStatusError) as e:
                 print(f"Error: {e}")
                 if attempt == max_retries - 1:
-                    return False
+                    return 0.0
                 time.sleep(2 ** attempt)
             except Exception as e:
                 print(f"Error: {e}")
                 if attempt == max_retries - 1:
-                    return False
-        return False
+                    return 0.0
+        return 0.0
 
     prompts = []
     skip_indices = set()
@@ -708,7 +722,7 @@ def _call_llm_judge(completions, solutions, questions):
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             try:
-                results[idx] = 1.0 if future.result() else 0.0
+                results[idx] = float(future.result())
             except Exception:
                 results[idx] = 0.0
 
@@ -723,6 +737,11 @@ def accuracy_reward_v2(completions, solution, question, **kwargs):
     rewards = _call_llm_judge(completions, solution, question)
     # 缓存结果，decision_reward_auto 按顺序在后面执行时直接读取
     _accuracy_cache["results"] = rewards
+    # Log API success rate for debugging
+    nonzero_count = sum(1 for r in rewards if r > 0)
+    print(f"[accuracy_reward] scores: mean={sum(rewards)/len(rewards):.3f}, "
+          f"nonzero={nonzero_count}/{len(rewards)}, "
+          f"values={[round(r, 2) for r in rewards]}")
     return rewards
 
 
@@ -919,12 +938,12 @@ def main(grpo_args, training_args, model_args):
         # output_record_file=f"./sample_output/{training_args.run_name}.txt",
     )
 
-    # 设置 reward 权重：accuracy=0.45, format=0.15, decision=0.15, latent_quality=0.25
+    # 设置 reward 权重：以答案正确性为核心，decision 鼓励自适应生成
     weight_map = {
-        "accuracy": 0.5,
+        "accuracy": 0.75,
         "format": 0.1,
-        "decision": 0.1,
-        "latent_quality": 0.3,
+        "decision": 0.15,
+        "latent_quality": 0.0,  # 保留 key 兼容，但权重为 0（不鼓励照片级重建）
     }
     reward_weights = [weight_map[name] for name in active_reward_names]
     trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)
