@@ -9,11 +9,11 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
 torchrun \
-    --nproc_per_node="8" \
-    --nnodes="1" \
-    --node_rank="0" \
-    --master_addr="127.0.0.1" \
-    --master_port="12345" \
+    --nproc_per_node="${NPROC_PER_NODE:-8}" \
+    --nnodes="${NNODES:-1}" \
+    --node_rank="${NODE_RANK:-0}" \
+    --master_addr="${MASTER_ADDR:-127.0.0.1}" \
+    --master_port="${MASTER_PORT:-12345}" \
     train/grpo/interleave_grpo.py \
     --deepspeed ./scripts/zero3_offload.json \
     --bf16 true \

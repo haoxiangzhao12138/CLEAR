@@ -667,17 +667,16 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                     break
 
             if latent_quality_idx >= 0:
-                # Get latent_quality rewards
+                # Get latent_quality rewards (rewards_per_func is already gathered at line 619)
                 latent_quality_rewards = rewards_per_func[:, latent_quality_idx]
                 # Replace NaN with 0.0 before computing advantages (for samples without generated images)
                 # This prevents NaN from propagating to image_advantages and image_loss
                 latent_quality_rewards = latent_quality_rewards.nan_to_num(0.0)
                 # Compute advantages based on latent_quality only
                 # For image advantages, use group-based normalization too
-                # First gather all latent quality rewards
-                latent_quality_rewards_gathered = gather(latent_quality_rewards)
+                # No need to gather again — rewards_per_func was already gathered above
                 # Reshape to (num_unique_prompts, num_generations)
-                latent_quality_rewards_reshaped = latent_quality_rewards_gathered.view(-1, self.num_generations)
+                latent_quality_rewards_reshaped = latent_quality_rewards.view(-1, self.num_generations)
                 mean_latent_quality = latent_quality_rewards_reshaped.mean(dim=1)
                 std_latent_quality = latent_quality_rewards_reshaped.std(dim=1)
                 mean_latent_quality = mean_latent_quality.repeat_interleave(
@@ -686,7 +685,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 std_latent_quality = std_latent_quality.repeat_interleave(
                     self.num_generations, dim=0
                 )
-                image_advantages = latent_quality_rewards_gathered - mean_latent_quality
+                image_advantages = latent_quality_rewards - mean_latent_quality
                 if self.scale_rewards:
                     image_advantages = image_advantages / (std_latent_quality + 1e-4)
                 # Slice to keep only the local part of the data
@@ -1263,12 +1262,15 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # 统一转成 CPU bfloat16（仅浮点）
         state_dict = _to_bf16_cpu(state_dict)
 
-        # 仅保存一个 safetensors 权重文件
-        st.save_file(
-            state_dict,
-            os.path.join(output_dir, "model.safetensors"),
-            metadata={"format": "pt"},  # 可选元数据
-        )
-        print(f"Saved model checkpoint to {output_dir}.")
+        # 仅 rank 0 保存：DeepSpeed ZeRO-3 下只有 rank 0 拿到完整权重，
+        # 其他 rank 的 state_dict 为空，写入会覆盖正确文件导致 checkpoint 损坏
+        if self.is_world_process_zero():
+            # 仅保存一个 safetensors 权重文件
+            st.save_file(
+                state_dict,
+                os.path.join(output_dir, "model.safetensors"),
+                metadata={"format": "pt"},  # 可选元数据
+            )
+            print(f"Saved model checkpoint to {output_dir}.")
         del state_dict
         torch.cuda.empty_cache()
