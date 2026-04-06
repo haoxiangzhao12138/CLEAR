@@ -898,7 +898,24 @@ class MMVet(ImageBaseDataset):
         'MMVet_Hard': 'http://opencompass.openxlab.space/utils/VLMEval/MMVet_Hard.tsv',
         "MMVet_LOW_LEVEL_HIGH": "/root/LMUData/MMVet_LOW_LEVEL_HIGH.tsv",
         "MMVet_LOW_LEVEL_MID": "/root/LMUData/MMVet_LOW_LEVEL_MID.tsv",
-        "MMVet_LOW_LEVEL_LOW": "/root/LMUData/MMVet_LOW_LEVEL_LOW.tsv"
+        "MMVet_LOW_LEVEL_LOW": "/root/LMUData/MMVet_LOW_LEVEL_LOW.tsv",
+        # Per-degradation benchmarks: MMVet
+        "MMVet_lens_blur": "/root/LMUData/MMVet_lens_blur.tsv",
+        "MMVet_lens_flare": "/root/LMUData/MMVet_lens_flare.tsv",
+        "MMVet_motion_blur": "/root/LMUData/MMVet_motion_blur.tsv",
+        "MMVet_dirty_lens": "/root/LMUData/MMVet_dirty_lens.tsv",
+        "MMVet_hsv_saturation": "/root/LMUData/MMVet_hsv_saturation.tsv",
+        "MMVet_jpeg_compression": "/root/LMUData/MMVet_jpeg_compression.tsv",
+        "MMVet_block_exchange": "/root/LMUData/MMVet_block_exchange.tsv",
+        "MMVet_mean_shift": "/root/LMUData/MMVet_mean_shift.tsv",
+        "MMVet_scan_lines": "/root/LMUData/MMVet_scan_lines.tsv",
+        "MMVet_dark_illumination": "/root/LMUData/MMVet_dark_illumination.tsv",
+        "MMVet_atmospheric_turbulence": "/root/LMUData/MMVet_atmospheric_turbulence.tsv",
+        "MMVet_gaussian_noise": "/root/LMUData/MMVet_gaussian_noise.tsv",
+        "MMVet_color_diffusion": "/root/LMUData/MMVet_color_diffusion.tsv",
+        "MMVet_sharpness_change": "/root/LMUData/MMVet_sharpness_change.tsv",
+        "MMVet_graffiti": "/root/LMUData/MMVet_graffiti.tsv",
+        "MMVet_watermark_damage": "/root/LMUData/MMVet_watermark_damage.tsv",
 
     }
     DATASET_MD5 = {'MMVet': '748aa6d4aa9d4de798306a63718455e3', 'MMVet_Hard': '63a598819a936a2e77c410a78a21ff16'}
