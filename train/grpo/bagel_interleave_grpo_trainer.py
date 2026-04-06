@@ -507,7 +507,13 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                     output_list.append(output)
                     if self.args.use_flow_grpo:
                         all_trajectories.append(trajectories)
-                    match = re.fullmatch(result_pattern, output[-1], re.DOTALL)
+                    # 用 search 而非 fullmatch：当模型走 image_restore 路径时，
+                    # output[-1] 是第二段 gen_text（不以 <think> 开头），
+                    # fullmatch 要求整个字符串匹配，会导致所有 image_restore 样本
+                    # 被错误标记为 is_eos=False，在 mask_truncated_completions=True 时
+                    # 这些样本 loss 全部归零，完全无法参与训练。
+                    # 改用 search：只要字符串中包含完整的 <answer>...</answer> 即视为完成。
+                    match = re.search(r"<answer>.*?</answer>", output[-1], re.DOTALL)
                     if match:
                         is_eos.append(True)
                     else:
