@@ -75,9 +75,9 @@ def process_single_row(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Per-degradation benchmark generation')
-    parser.add_argument('--input_dir', type=str, default='/root/LMUData',
+    parser.add_argument('--input_dir', type=str, default='./LMUData',
                         help='Directory containing the original TSV files')
-    parser.add_argument('--output_dir', type=str, default='/root/LMUData',
+    parser.add_argument('--output_dir', type=str, default='./LMUData',
                         help='Directory to save the processed TSV files')
     parser.add_argument('--workers', type=int, default=128,
                         help='Number of threads to use')

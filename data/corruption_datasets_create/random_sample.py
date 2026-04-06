@@ -12,8 +12,8 @@ from PIL import Image
 
 # ================= 配置区域 =================
 
-LOCAL_DATASET_PATH = "/root/CLEAR/datasets/LLaVA-OneVision-Data"
-OUTPUT_ROOT = "/root/CLEAR/datasets/processed_dataset"
+LOCAL_DATASET_PATH = "./datasets/LLaVA-OneVision-Data"
+OUTPUT_ROOT = "./datasets/processed_dataset"
 TEMP_DIR = os.path.join(OUTPUT_ROOT, "temp_jsonl")  # 临时文件夹
 
 # 采样比例

@@ -16,21 +16,21 @@ from tqdm import tqdm
 # =======================
 
 # ---- API ----
-API_KEY = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
-API_BASE = os.getenv("OPENAI_API_BASE", "http://yy.dbh.baidu-int.com/v1")
+API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
+API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 # 生成模型
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
 
 # ---- Paths ----
 # 图片根目录
-IMAGE_ROOT_DIR = "/root/CLEAR/datasets/processed_dataset/sft/images"
+IMAGE_ROOT_DIR = "./datasets/processed_dataset/sft/images"
 
 # 输入数据 (原始的大文件)
-INPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/sft_data.jsonl"
+INPUT_JSONL = "./datasets/processed_dataset/sft/sft_data.jsonl"
 
 # 输出数据 (采样并生成CoT后的文件)
-OUTPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/sft_pure_text.jsonl"
+OUTPUT_JSONL = "./datasets/processed_dataset/sft/sft_pure_text.jsonl"
 
 # ---- Sampling ----
 # 需要采样的数量

@@ -1,20 +1,40 @@
+# Model weights and datasets
 models/*
 datasets/*
 results/
+LMUData
+
+# Logs and caches
 wandb/*
 **/__pycache__/
+*.log
+*.pyc
+
+# Build artifacts
+**/*.egg-info/
+
+# Outputs and visualizations
 **/outputs/*
 VLMEvalKit/outputs/*
 VLMEvalKit/wandb
 VLMEvalKit/output.log
-**/test.*
-VLMEvalKit/config/test.json
-LMUData
-visualizations/*
-CLAUDE.md
-.claude/settings.local.json
-VLMEvalKit/sweep_*
 VLMEvalKit/vis
 VLMEvalKit/vis_merged
-scripts/train_reason_interleave_grpo.sh
+VLMEvalKit/sweep_*
+visualizations/*
+
+# Environment and secrets
+**/.env
+.env
+
+# IDE and tool configs
+.vscode/
+.baidu-cc/
+.claude/settings.local.json
+
+# Claude Code
+CLAUDE.md
+
+# Test files
+**/test.*
 VLMEvalKit/config/test.json

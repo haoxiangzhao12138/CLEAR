@@ -623,8 +623,8 @@ def _call_llm_judge(completions, solutions, questions):
     调用 LLM 判断答案正确性。
     从原 accuracy_reward_with_llm 中提取的核心逻辑。
     """
-    base_url = "http://yy.dbh.baidu-int.com"
-    api_key = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
+    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com")
+    api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.
     Your task is to compare the predicted answer with the correct answer and rate the correctness on a continuous scale. Here's how you can accomplish the task:

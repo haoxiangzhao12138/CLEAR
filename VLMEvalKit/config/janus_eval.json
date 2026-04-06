@@ -2,7 +2,7 @@
     "model": {
         "Janus-Pro-7B": {
             "class": "Janus",
-            "model_path": "/root/deepseek-ai/Janus-Pro-7B"
+            "model_path": "./models/Janus-Pro-7B"
         }
     },
     "data": {

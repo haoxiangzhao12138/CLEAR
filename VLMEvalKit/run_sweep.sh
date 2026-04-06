@@ -13,15 +13,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # --- Proxy setup ---
-# wandb needs internet access through the corporate proxy.
-# Evaluation subprocess (torchrun) will have proxy vars stripped automatically
-# by sweep_agent.py, so it always runs on the intranet.
-export http_proxy=http://agent.baidu.com:8891
-export https_proxy=http://agent.baidu.com:8891
-export HTTP_PROXY=http://agent.baidu.com:8891
-export HTTPS_PROXY=http://agent.baidu.com:8891
-export no_proxy=baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com
-export NO_PROXY=baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com
+# Configure your proxy settings if needed.
+# export http_proxy=http://your-proxy:port
+# export https_proxy=http://your-proxy:port
+# export HTTP_PROXY=http://your-proxy:port
+# export HTTPS_PROXY=http://your-proxy:port
+# export no_proxy=localhost,127.0.0.1
+# export NO_PROXY=localhost,127.0.0.1
 
 # Ensure wandb is NOT in offline mode
 unset WANDB_MODE 2>/dev/null || true

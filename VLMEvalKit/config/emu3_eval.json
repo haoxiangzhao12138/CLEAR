@@ -2,8 +2,8 @@
     "model": {
         "Emu3-Chat": {
             "class": "Emu3_chat",
-            "model_path": "/root/BAAI/Emu3-Chat",
-            "tokenizer_path": "/root/BAAI/Emu3-VisionTokenizer",
+            "model_path": "./models/Emu3-Chat",
+            "tokenizer_path": "./models/Emu3-VisionTokenizer",
             "max_new_tokens": 1024
         }
     },

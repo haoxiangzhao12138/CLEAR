@@ -124,12 +124,12 @@ def process_single_row(args):
 
 def main():
     parser = argparse.ArgumentParser(description='VLMEvalKit TSV Degradation Pipeline')
-    # 修改：默认路径设为 /root/LMUData
-    parser.add_argument('--input_dir', type=str, 
-                       default='/root/LMUData',
+    # Default path for LMUData
+    parser.add_argument('--input_dir', type=str,
+                       default='./LMUData',
                        help='Directory containing the original TSV files')
     parser.add_argument('--output_dir', type=str,
-                       default='/root/LMUData',
+                       default='./LMUData',
                        help='Directory to save the processed TSV files')
     parser.add_argument('--workers', type=int,
                        default=128,

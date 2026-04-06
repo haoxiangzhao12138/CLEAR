@@ -21,19 +21,19 @@ import matplotlib.pyplot as plt
 # =======================
 
 # ---- API ----
-API_KEY = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
-API_BASE = os.getenv("OPENAI_API_BASE", "http://yy.dbh.baidu-int.com/v1")
+API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
+API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
 JUDGE_MODEL_NAME = os.getenv("JUDGE_MODEL_NAME", "gpt-4.1")
 
 # ---- Paths ----
-CLEAN_IMAGE_DIR = "/root/CLEAR/datasets/processed_dataset/sft/images"
-CORRUPTED_IMAGE_DIR = "/root/CLEAR/datasets/processed_dataset/sft/corruption_images"
-INPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/sft_data.jsonl"
-OUTPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered.jsonl"
-OUTPUT_JSONL_TOOL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_tool.jsonl"
-OUTPUT_JSONL_NO_TOOL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_no_tool.jsonl"
+CLEAN_IMAGE_DIR = "./datasets/processed_dataset/sft/images"
+CORRUPTED_IMAGE_DIR = "./datasets/processed_dataset/sft/corruption_images"
+INPUT_JSONL = "./datasets/processed_dataset/sft/sft_data.jsonl"
+OUTPUT_JSONL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered.jsonl"
+OUTPUT_JSONL_TOOL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered_tool.jsonl"
+OUTPUT_JSONL_NO_TOOL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered_no_tool.jsonl"
 
 # ---- Concurrency ----
 NUM_WORKERS = 190
@@ -48,7 +48,7 @@ JUDGE_MAX_TOKENS = 128
 
 # ---- Visualization ----
 VISUALIZE_MODE = False
-VISUALIZE_DIR = "/root/CLEAR/visualizations/debug_output_interleave"
+VISUALIZE_DIR = "./visualizations/debug_output_interleave"
 MAX_VISUALIZE_COUNT = 20  # -1 for unlimited
 
 # =======================

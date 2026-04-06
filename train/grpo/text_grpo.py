@@ -324,7 +324,7 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
     Returns:
         list[bool]: 每个 prompt 的处理结果（True/False）
     """
-    base_url = "http://yq01-inf-hic-k8s-a100-aa24-0020.yq01.baidu.com:8081/v1"
+    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
     api_key = "-"
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.

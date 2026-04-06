@@ -19,9 +19,9 @@ torchrun \
     --bf16 true \
     --output_dir results/${WANDB_RUN_NAME} \
     --save_dir ./case_out/${WANDB_RUN_NAME} \
-    --jsonl_path /root/CLEAR/datasets/processed_dataset/rl/rl_data.jsonl \
-    --image_root /root/CLEAR/datasets/processed_dataset/rl/corruption_images/ \
-    --clean_image_root /root/CLEAR/datasets/processed_dataset/rl/images/ \
+    --jsonl_path ./datasets/processed_dataset/rl/rl_data.jsonl \
+    --image_root ./datasets/processed_dataset/rl/corruption_images/ \
+    --clean_image_root ./datasets/processed_dataset/rl/images/ \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
     --enable_reward_format True \
@@ -53,11 +53,7 @@ torchrun \
     --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-<<<<<<< HEAD
-    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
-=======
-    --model_param_path /root/CLEAR/results/20260330_184555_clear_sft_distill_per_token_KL_long/0003000 \
->>>>>>> bbf541700caad3f57dea21060f8126cd0f4fc410
+    --model_param_path ./results/checkpoint \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \

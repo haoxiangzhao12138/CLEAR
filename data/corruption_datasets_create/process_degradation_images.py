@@ -97,11 +97,11 @@ def process_single_image(filename, folder_path, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Image degradation pipeline - Hard Mode')
-    parser.add_argument('--input_dir', type=str, 
-                       default="/root/CLEAR/datasets/processed_dataset/rl/images",
+    parser.add_argument('--input_dir', type=str,
+                       default="./datasets/processed_dataset/rl/images",
                        help='Input image directory path')
     parser.add_argument('--output_dir', type=str,
-                       default="/root/CLEAR/datasets/processed_dataset/rl/corruption_images",
+                       default="./datasets/processed_dataset/rl/corruption_images",
                        help='Output directory')
     
     args = parser.parse_args()

@@ -23,8 +23,8 @@ from tqdm import tqdm
 
 
 ## Model Initialization
-model_path = "/root/CLEAR/models/BAGEL-7B-MoT"  # Download from https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT
-model_param_path = "/root/CLEAR/models/BAGEL-7B-MoT" 
+model_path = "./models/BAGEL-7B-MoT"  # Download from https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT
+model_param_path = "./models/BAGEL-7B-MoT" 
 device = "cuda:0"
 save_root = "test_infer"
 
