@@ -1,0 +1,90 @@
+{
+    "model": {
+        "CLEAR_distill_per_token_200": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260330_190814_new_KL_per_token/checkpoint-200",
+            "reasoning_mode": "interleave",
+            "is_thinking": false,
+            "is_ema": false,
+            "output_need_vae": true,
+            "output_need_vit": false,
+            "verbose_print": false,
+            "enable_image_gen_stats": false
+        },
+        "Bagel": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": false,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "RealWorldQA_lens_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_lens_blur"
+        },
+        "RealWorldQA_lens_flare": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_lens_flare"
+        },
+        "RealWorldQA_motion_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_motion_blur"
+        },
+        "RealWorldQA_dirty_lens": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_dirty_lens"
+        },
+        "RealWorldQA_hsv_saturation": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_hsv_saturation"
+        },
+        "RealWorldQA_jpeg_compression": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_jpeg_compression"
+        },
+        "RealWorldQA_block_exchange": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_block_exchange"
+        },
+        "RealWorldQA_mean_shift": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_mean_shift"
+        },
+        "RealWorldQA_scan_lines": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_scan_lines"
+        },
+        "RealWorldQA_dark_illumination": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_dark_illumination"
+        },
+        "RealWorldQA_atmospheric_turbulence": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_atmospheric_turbulence"
+        },
+        "RealWorldQA_gaussian_noise": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_gaussian_noise"
+        },
+        "RealWorldQA_color_diffusion": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_color_diffusion"
+        },
+        "RealWorldQA_sharpness_change": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_sharpness_change"
+        },
+        "RealWorldQA_graffiti": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_graffiti"
+        },
+        "RealWorldQA_watermark_damage": {
+            "class": "ImageMCQDataset",
+            "dataset": "RealWorldQA_watermark_damage"
+        }
+    }
+}

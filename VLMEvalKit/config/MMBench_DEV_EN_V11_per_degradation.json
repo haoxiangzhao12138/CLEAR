@@ -1,0 +1,90 @@
+{
+    "model": {
+        "CLEAR_distill_per_token_200": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260330_190814_new_KL_per_token/checkpoint-200",
+            "reasoning_mode": "interleave",
+            "is_thinking": false,
+            "is_ema": false,
+            "output_need_vae": true,
+            "output_need_vit": false,
+            "verbose_print": false,
+            "enable_image_gen_stats": false
+        },
+        "Bagel": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": false,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "MMBench_DEV_EN_V11_lens_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_lens_blur"
+        },
+        "MMBench_DEV_EN_V11_lens_flare": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_lens_flare"
+        },
+        "MMBench_DEV_EN_V11_motion_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_motion_blur"
+        },
+        "MMBench_DEV_EN_V11_dirty_lens": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_dirty_lens"
+        },
+        "MMBench_DEV_EN_V11_hsv_saturation": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_hsv_saturation"
+        },
+        "MMBench_DEV_EN_V11_jpeg_compression": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_jpeg_compression"
+        },
+        "MMBench_DEV_EN_V11_block_exchange": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_block_exchange"
+        },
+        "MMBench_DEV_EN_V11_mean_shift": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_mean_shift"
+        },
+        "MMBench_DEV_EN_V11_scan_lines": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_scan_lines"
+        },
+        "MMBench_DEV_EN_V11_dark_illumination": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_dark_illumination"
+        },
+        "MMBench_DEV_EN_V11_atmospheric_turbulence": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_atmospheric_turbulence"
+        },
+        "MMBench_DEV_EN_V11_gaussian_noise": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_gaussian_noise"
+        },
+        "MMBench_DEV_EN_V11_color_diffusion": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_color_diffusion"
+        },
+        "MMBench_DEV_EN_V11_sharpness_change": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_sharpness_change"
+        },
+        "MMBench_DEV_EN_V11_graffiti": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_graffiti"
+        },
+        "MMBench_DEV_EN_V11_watermark_damage": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMBench_DEV_EN_V11_watermark_damage"
+        }
+    }
+}
