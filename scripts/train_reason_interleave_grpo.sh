@@ -4,7 +4,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=clear_interleave_rl
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_new_SDE_debug
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_new_standard
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -50,7 +50,7 @@ torchrun \
     --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path /root/CLEAR/results/20260328_215133_clear_sft_drop_vit/0000600 \
+    --model_param_path /root/CLEAR/results/20260209_000155_mix_without_vit/0003000 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \

@@ -24,6 +24,7 @@ from .modeling.bagel import (
 from .modeling.qwen2 import Qwen2Tokenizer
 from .modeling.autoencoder import load_ae
 from .inferencer import InterleaveInferencer
+from .visualize import visualize_inference
 from datetime import datetime
 import random
 import string
@@ -137,6 +138,7 @@ class BagelInference(BaseModel):
         verbose_print: bool = False,  # 控制是否打印模型输出
         enable_image_gen_stats: bool = False,  # 控制是否启用图片生成统计
         save_file=None,  # if None, then no save the reasoning process
+        vis_dir=None,    # if set, save per-sample visualization (original imgs, generated imgs, html summary)
     ):
         super().__init__()
         self.verbose = verbose
@@ -149,6 +151,12 @@ class BagelInference(BaseModel):
         assert self.reasoning_mode in ["text", "image", "interleave"]
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         self.device = f"cuda:{local_rank}"
+        self.vis_counter = 0
+        if vis_dir is not None:
+            self.vis_dir = os.path.join(vis_dir, f"rank_{local_rank}")
+            os.makedirs(self.vis_dir, exist_ok=True)
+        else:
+            self.vis_dir = None
         self.save_file = save_file
 
         llm_config = Qwen2Config.from_json_file(
@@ -276,6 +284,17 @@ class BagelInference(BaseModel):
                 output_list=output_list,
                 target_dir=os.path.join("./stored_rl", self.save_file),
             )
+
+        if self.vis_dir is not None:
+            visualize_inference(
+                messages=message,
+                output_list=output_list,
+                response=response,
+                vis_dir=self.vis_dir,
+                sample_idx=self.vis_counter,
+            )
+            self.vis_counter += 1
+
         return response
 
     def print_image_gen_stats(self):

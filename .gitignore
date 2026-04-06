@@ -14,3 +14,7 @@ visualizations/*
 CLAUDE.md
 .claude/settings.local.json
 VLMEvalKit/sweep_*
+VLMEvalKit/vis
+VLMEvalKit/vis_merged
+scripts/train_reason_interleave_grpo.sh
+VLMEvalKit/config/test.json

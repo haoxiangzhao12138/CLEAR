@@ -1,4 +1,5 @@
 import json
+import time
 
 import torch
 import torch.distributed as dist
@@ -174,8 +175,24 @@ You can launch the evaluation by setting either --data and --model or --config.
     return args
 
 
+def _fmt_duration(seconds):
+    """Format seconds into human-readable string."""
+    h = int(seconds) // 3600
+    m = (int(seconds) % 3600) // 60
+    s = seconds % 60
+    if h > 0:
+        return f"{h}h {m}m {s:.1f}s"
+    elif m > 0:
+        return f"{m}m {s:.1f}s"
+    else:
+        return f"{s:.1f}s"
+
+
 def main():
     logger = get_logger("RUN")
+    overall_start_time = time.time()
+    timing_records = []  # list of (model, dataset, stage, duration)
+
     rank, world_size = get_rank_and_world_size()
     args = parse_args()
     use_config, cfg = False, None
@@ -347,6 +364,7 @@ def main():
                     model = model_name  # which is only a name
 
                 # Perform the Inference
+                infer_start = time.time()
                 if dataset.MODALITY == "VIDEO":
                     model = infer_data_job_video(
                         model,
@@ -380,6 +398,13 @@ def main():
                         ignore_failed=args.ignore,
                         use_vllm=args.use_vllm,
                     )
+                infer_duration = time.time() - infer_start
+                if rank == 0:
+                    logger.info(
+                        f"[Timing] Inference {model_name} x {dataset_name}: "
+                        f"{_fmt_duration(infer_duration)}"
+                    )
+                    timing_records.append((model_name, dataset_name, "inference", infer_duration))
 
                 # Set the judge kwargs first before evaluation or dumping
 
@@ -516,7 +541,14 @@ def main():
                         proxy_set(eval_proxy)
 
                     # Perform the Evaluation
+                    eval_start = time.time()
                     eval_results = dataset.evaluate(result_file, **judge_kwargs)
+                    eval_duration = time.time() - eval_start
+                    logger.info(
+                        f"[Timing] Evaluation {model_name} x {dataset_name}: "
+                        f"{_fmt_duration(eval_duration)}"
+                    )
+                    timing_records.append((model_name, dataset_name, "evaluation", eval_duration))
                     # Display Evaluation Results in Terminal
                     if eval_results is not None:
                         assert isinstance(eval_results, dict) or isinstance(
@@ -565,6 +597,28 @@ def main():
 
     if world_size > 1:
         dist.destroy_process_group()
+
+    # Print timing summary on rank 0
+    overall_duration = time.time() - overall_start_time
+    if rank == 0 and timing_records:
+        logger.info("=" * 60)
+        logger.info("TIMING SUMMARY")
+        logger.info("=" * 60)
+        total_infer = 0.0
+        total_eval = 0.0
+        for model_name_r, dataset_name_r, stage, duration in timing_records:
+            logger.info(
+                f"  {model_name_r} x {dataset_name_r} [{stage}]: {_fmt_duration(duration)}"
+            )
+            if stage == "inference":
+                total_infer += duration
+            else:
+                total_eval += duration
+        logger.info("-" * 60)
+        logger.info(f"  Total inference time: {_fmt_duration(total_infer)}")
+        logger.info(f"  Total evaluation time: {_fmt_duration(total_eval)}")
+        logger.info(f"  Total run time: {_fmt_duration(overall_duration)}")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":
