@@ -1,8 +1,8 @@
 {
     "model": {
-        "gemini-3.1-pro-preview": {
+        "gemini-3-flash-preview": {
             "class": "GPT4V",
-            "model": "gemini-3.1-pro-preview",
+            "model": "gemini-3-flash-preview",
             "temperature": 0,
             "img_size": -1,
             "img_detail": "high",
@@ -13,30 +13,6 @@
         }
     },
     "data": {
-        "MMBench_DEV_EN_V11": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11"
-        },
-        "MMVet": {
-            "class": "MMVet",
-            "dataset": "MMVet"
-        },
-        "MMVP": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMVP"
-        },
-        "CV-Bench-2D": {
-            "class": "CVBench",
-            "dataset": "CV-Bench-2D"
-        },
-        "MMStar": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMStar"
-        },
-        "RealWorldQA": {
-            "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA"
-        },
         "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
             "class": "ImageMCQDataset",
             "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"

@@ -1,66 +1,74 @@
 {
     "model": {
-        "CLEAR_distill": {
+        "CLEAR_distill_per_token_200": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/20260328_215133_clear_sft_drop_vit/0000600",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260330_190814_new_KL_per_token/checkpoint-200",
             "reasoning_mode": "interleave",
             "is_thinking": false,
-            "is_ema": true,
+            "is_ema": false,
             "output_need_vae": true,
             "output_need_vit": false,
             "verbose_print": false,
             "enable_image_gen_stats": false
+        },
+        "Bagel": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": false,
+            "is_ema": true
         }
     },
     "data": {
-        "MMBench_DEV_EN_V11": {
+        "MMBench_DEV_EN_V11_LOW_LEVEL_MID": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11"
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_MID"
         },
-        "MMVet": {
+        "MMVet_LOW_LEVEL_MID": {
             "class": "MMVet",
-            "dataset": "MMVet"
+            "dataset": "MMVet_LOW_LEVEL_MID"
         },
-        "MMVP": {
+        "MMVP_LOW_LEVEL_MID": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP"
+            "dataset": "MMVP_LOW_LEVEL_MID"
         },
-        "CV-Bench-2D": {
+        "CV-Bench-2D_LOW_LEVEL_MID": {
             "class": "CVBench",
-            "dataset": "CV-Bench-2D"
+            "dataset": "CV-Bench-2D_LOW_LEVEL_MID"
         },
-        "MMStar": {
+        "MMStar_LOW_LEVEL_MID": {
             "class": "ImageMCQDataset",
-            "dataset": "MMStar"
+            "dataset": "MMStar_LOW_LEVEL_MID"
         },
-        "RealWorldQA": {
+        "RealWorldQA_LOW_LEVEL_MID": {
             "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA"
+            "dataset": "RealWorldQA_LOW_LEVEL_MID"
         },
-        "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH": {
+        "MMBench_DEV_EN_V11_LOW_LEVEL_LOW": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_HIGH"
+            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_LOW"
         },
-        "MMVet_LOW_LEVEL_HIGH": {
+        "MMVet_LOW_LEVEL_LOW": {
             "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_HIGH"
+            "dataset": "MMVet_LOW_LEVEL_LOW"
         },
-        "MMVP_LOW_LEVEL_HIGH": {
+        "MMVP_LOW_LEVEL_LOW": {
             "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_HIGH"
+            "dataset": "MMVP_LOW_LEVEL_LOW"
         },
-        "CV-Bench-2D_LOW_LEVEL_HIGH": {
+        "CV-Bench-2D_LOW_LEVEL_LOW": {
             "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_HIGH"
+            "dataset": "CV-Bench-2D_LOW_LEVEL_LOW"
         },
-        "MMStar_LOW_LEVEL_HIGH": {
+        "MMStar_LOW_LEVEL_LOW": {
             "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_HIGH"
+            "dataset": "MMStar_LOW_LEVEL_LOW"
         },
-        "RealWorldQA_LOW_LEVEL_HIGH": {
+        "RealWorldQA_LOW_LEVEL_LOW": {
             "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_HIGH"
+            "dataset": "RealWorldQA_LOW_LEVEL_LOW"
         }
     }
 }

@@ -1,0 +1,90 @@
+{
+    "model": {
+        "CLEAR_distill_per_token_200": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260330_190814_new_KL_per_token/checkpoint-200",
+            "reasoning_mode": "interleave",
+            "is_thinking": false,
+            "is_ema": false,
+            "output_need_vae": true,
+            "output_need_vit": false,
+            "verbose_print": false,
+            "enable_image_gen_stats": false
+        },
+        "Bagel": {
+            "class": "BagelInference",
+            "model_config_path": "../models/BAGEL-7B-MoT",
+            "model_param_path": "../models/BAGEL-7B-MoT",
+            "reasoning_mode": "text",
+            "is_thinking": false,
+            "is_ema": true
+        }
+    },
+    "data": {
+        "MMVP_lens_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_lens_blur"
+        },
+        "MMVP_lens_flare": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_lens_flare"
+        },
+        "MMVP_motion_blur": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_motion_blur"
+        },
+        "MMVP_dirty_lens": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_dirty_lens"
+        },
+        "MMVP_hsv_saturation": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_hsv_saturation"
+        },
+        "MMVP_jpeg_compression": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_jpeg_compression"
+        },
+        "MMVP_block_exchange": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_block_exchange"
+        },
+        "MMVP_mean_shift": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_mean_shift"
+        },
+        "MMVP_scan_lines": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_scan_lines"
+        },
+        "MMVP_dark_illumination": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_dark_illumination"
+        },
+        "MMVP_atmospheric_turbulence": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_atmospheric_turbulence"
+        },
+        "MMVP_gaussian_noise": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_gaussian_noise"
+        },
+        "MMVP_color_diffusion": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_color_diffusion"
+        },
+        "MMVP_sharpness_change": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_sharpness_change"
+        },
+        "MMVP_graffiti": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_graffiti"
+        },
+        "MMVP_watermark_damage": {
+            "class": "ImageMCQDataset",
+            "dataset": "MMVP_watermark_damage"
+        }
+    }
+}
