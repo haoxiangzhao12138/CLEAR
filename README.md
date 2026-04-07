@@ -249,11 +249,14 @@ The benchmark generation scripts are in `data/corruption_datasets_create/`.
 ## Citation
 
 ```bibtex
-@article{zhang2026clear,
-  title={CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models},
-  author={Zhang, Zefeng and Hao, Xiangzhao and Tang, Hengzhu and Zhang, Zhenyu and Sheng, Jiawei and Li, Xiaodong and Li, Zhenyang and Gao, Li and Shi, Daiting and Yin, Dawei and others},
-  journal={arXiv preprint arXiv:2604.04780},
-  year={2026}
+@misc{hao2026clearunlockinggenerativepotential,
+      title={CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models},
+      author={Xiangzhao Hao and Zefeng Zhang and Zhenyu Zhang and Linhao Yu and Yao Chen and Yiqian Zhang and Haiyun Guo and Shuohuan Wang and Yu Sun},
+      year={2026},
+      eprint={2604.04780},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2604.04780},
 }
 ```
 
