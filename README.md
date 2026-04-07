@@ -67,35 +67,6 @@ CLEAR adaptively decides whether to invoke image restoration based on degradatio
   <img src="./assets/qualitative.png" width="90%" />
 </p>
 
-<details>
-<summary><b>More restoration examples</b></summary>
-<p align="center">
-  <img src="./assets/additional_qualitative.png" width="90%" />
-</p>
-</details>
-
-<details>
-<summary><b>Adaptive triggering rate across degradation levels</b></summary>
-<p align="center">
-  <img src="./assets/adaptive.png" width="60%" />
-</p>
-As degradation severity increases, CLEAR triggers image restoration more frequently, demonstrating learned adaptive behavior.
-</details>
-
----
-
-## Paper-Code Mapping
-
-| Paper Section | Code Location |
-|---|---|
-| Stage 1: SFT | `train/pretrain_unified_corruption.py` + `scripts/train_mix.sh` |
-| Stage 2: Bridge Training | `modeling/bagel/bagel.py` (`vae2llm`, `forward_cache_update_vae_from_packed_latent`) |
-| Stage 3: Interleaved GRPO | `train/grpo/interleave_grpo.py` + `scripts/train_reason_interleave_grpo.sh` |
-| Reward Functions | `train/grpo/interleave_grpo.py` (`accuracy_reward_v2`, `format_reward_v2`, `decision_reward_auto`, `latent_quality_reward`) |
-| MMD-Bench Construction | `data/corruption_datasets_create/` |
-| MMD-Bench Evaluation | `VLMEvalKit/` |
-| Interleaved Inference | `inferencer.py` (`interleave_reason_tool_condition`) |
-
 ---
 
 ## Project Structure
