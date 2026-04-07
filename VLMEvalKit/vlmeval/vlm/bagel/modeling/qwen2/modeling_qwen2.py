@@ -920,10 +920,10 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel, GenerationMixin):
         self.post_init()
 
     """
-    获取模型的输入嵌入层
+    Get the model's input embedding layer.
 
     Returns:
-        torch.nn.Module: 返回模型使用的词嵌入层
+        torch.nn.Module: The word embedding layer used by the model.
     """
     def get_input_embeddings(self):
         return self.model.embed_tokens

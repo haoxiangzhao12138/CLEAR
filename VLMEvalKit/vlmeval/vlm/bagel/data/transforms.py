@@ -142,23 +142,23 @@ def crop(image, crop_factors):
 
 
 def motion_blur_opencv(image, kernel_size=15, angle=0):
-    # 线性核
+    # Linear kernel
     kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
     kernel[kernel_size // 2, :] = np.ones(kernel_size, dtype=np.float32)
 
-    # 旋转核
+    # Rotate kernel
     center = (kernel_size / 2 - 0.5, kernel_size / 2 - 0.5)
     M = cv2.getRotationMatrix2D(center, angle, 1)
     rotated_kernel = cv2.warpAffine(kernel, M, (kernel_size, kernel_size))
 
-    # 归一化核
+    # Normalize kernel
     rotated_kernel /= rotated_kernel.sum() if rotated_kernel.sum() != 0 else 1
 
     img = np.array(image)
     if img.ndim == 2:
         blurred = cv2.filter2D(img, -1, rotated_kernel, borderType=cv2.BORDER_REFLECT)
     else:
-        # 对于彩色图像，各通道独立卷积
+        # For color images, convolve each channel independently
         blurred = np.zeros_like(img)
         for c in range(img.shape[2]):
             blurred[..., c] = cv2.filter2D(img[..., c], -1, rotated_kernel, borderType=cv2.BORDER_REFLECT)
@@ -167,7 +167,7 @@ def motion_blur_opencv(image, kernel_size=15, angle=0):
 
 
 def shuffle_patch(image, num_splits, gap_size=2):
-    """将图像分割为块（允许尺寸不整除），随机打乱后拼接，块间保留间隙"""
+    """Split the image into patches (allowing non-divisible sizes), randomly shuffle and reassemble them with gaps between patches."""
     h_splits, w_splits = num_splits
     img_w, img_h = image.size
 
@@ -197,21 +197,21 @@ def shuffle_patch(image, num_splits, gap_size=2):
     total_height = sum(patch_heights) + (h_splits - 1) * gap_size
     new_image = Image.new(image.mode, (total_width, total_height), color=(255, 255, 255))
 
-    current_y = 0  # 当前行的起始 Y 坐标
-    patch_idx = 0  # 当前处理的块索引
+    current_y = 0  # Starting Y coordinate of the current row
+    patch_idx = 0  # Index of the current patch being processed
     for i in range(h_splits):
-        current_x = 0  # 当前列的起始 X 坐标
-        patch_h = patch_heights[i]  # 当前行块的高度
+        current_x = 0  # Starting X coordinate of the current column
+        patch_h = patch_heights[i]  # Height of the current row's patches
         for j in range(w_splits):
-            # 取出打乱后的块
+            # Get the shuffled patch
             patch = patches[patch_idx]
-            patch_w = patch_widths[j]  # 当前列块的宽度
-            # 粘贴块（左上角坐标为 (current_x, current_y)）
+            patch_w = patch_widths[j]  # Width of the current column's patches
+            # Paste the patch (top-left corner at (current_x, current_y))
             new_image.paste(patch, (current_x, current_y))
-            # 更新 X 坐标（下一个块的起始位置 = 当前块宽度 + 间隙）
+            # Update X coordinate (next patch start = current patch width + gap)
             current_x += patch_w + gap_size
             patch_idx += 1
-        # 更新 Y 坐标（下一行的起始位置 = 当前行高度 + 间隙）
+        # Update Y coordinate (next row start = current row height + gap)
         current_y += patch_h + gap_size
 
     return new_image
@@ -219,17 +219,17 @@ def shuffle_patch(image, num_splits, gap_size=2):
 
 def inpainting(image, num_splits, blank_ratio=0.3, blank_color=(255, 255, 255)):
     """
-    图像分割后随机空白部分patch，用于inpainting任务
-    
-    参数：
-        image: PIL.Image 输入图像（RGB模式）
-        h_splits: int 行分割数（垂直方向分割块数）
-        w_splits: int 列分割数（水平方向分割块数）
-        blank_ratio: float 空白patch的比例（0~1）
-        blank_color: tuple 空白区域的颜色（RGB，如白色(255,255,255)）
-    
-    返回：
-        PIL.Image 处理后拼接的图像
+    Randomly blank out some patches after splitting the image, used for inpainting tasks.
+
+    Args:
+        image: PIL.Image input image (RGB mode)
+        h_splits: int number of row splits (vertical split count)
+        w_splits: int number of column splits (horizontal split count)
+        blank_ratio: float ratio of blank patches (0~1)
+        blank_color: tuple color of blank regions (RGB, e.g., white (255,255,255))
+
+    Returns:
+        PIL.Image processed and reassembled image
     """
     h_splits, w_splits = num_splits
     img_w, img_h = image.size
@@ -267,7 +267,7 @@ def inpainting(image, num_splits, blank_ratio=0.3, blank_color=(255, 255, 255)):
         else:
             processed_patches.append(patch)
 
-    # 创建结果图像（尺寸与原图一致）
+    # Create result image (same size as original)
     result_image = Image.new("RGB", (img_w, img_h))
     current_y = 0
     patch_idx = 0
@@ -275,10 +275,10 @@ def inpainting(image, num_splits, blank_ratio=0.3, blank_color=(255, 255, 255)):
         current_x = 0
         patch_h = patch_heights[i]
         for j in range(w_splits):
-            # 取出处理后的patch
+            # Get the processed patch
             patch = processed_patches[patch_idx]
             patch_w = patch_widths[j]
-            # 粘贴到原位置
+            # Paste at the original position
             result_image.paste(patch, (current_x, current_y))
             current_x += patch_w
             patch_idx += 1

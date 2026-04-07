@@ -1,5 +1,4 @@
-export DEBUG_MODE="true" # Enable Debug if you want to see the rollout of model during RL
-export LOG_PATH="./debug_log_2b.txt"
+export DEBUG_MODE="false" # Enable Debug if you want to see the rollout of model during RL
 export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")

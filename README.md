@@ -1,46 +1,122 @@
-# COOPER
+# CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models
 
 <p align="center">
-  <a href="https://arxiv.org/pdf/2512.04563">Paper</a> |
-  <a href="https://huggingface.co/Starrrrrry/COOPER">Model</a> |
-  <a href="https://huggingface.co/Starrrrrry/COOPER-AMG">COOPER-AMG Model</a> |
-  <a href="https://huggingface.co/datasets/Starrrrrry/COOPER_Train_Set">Training Data</a>
+  <a href="https://arxiv.org/abs/2604.04780">
+    <img src="https://img.shields.io/badge/arXiv-Paper-red?logo=arxiv" alt="Paper">
+  </a>
+  <a href="https://haoxiangzhao12138.github.io/CLEAR/">
+    <img src="https://img.shields.io/badge/Project-Page-blue?logo=github" alt="Project Page">
+  </a>
+  <a href="https://huggingface.co/CUDAOUTOFMEMORY/CLEAR">
+    <img src="https://img.shields.io/badge/%F0%9F%A4%97-Model-yellow" alt="Model">
+  </a>
+  <a href="https://huggingface.co/datasets/CUDAOUTOFMEMORY/MMD-Bench">
+    <img src="https://img.shields.io/badge/%F0%9F%A4%97-Data-yellow" alt="Data">
+  </a>
 </p>
 
-Official implementation of **COOPER**, a unified multimodal large language model for visual spatial intelligence that cooperatively couples perception and reasoning. Built on the [BAGEL](https://github.com/ByteDance-Seed/BAGEL) framework, COOPER endows a single model with intrinsic perception enhancement (e.g., depth estimation and semantic segmentation) and reasoning enhancement via multimodal chain-of-thought. We further extend COOPER with reinforcement learning and a cooperative perception-reasoning reward, enabling the model to adaptively decide when to "perceive" and when to "reason" during inference.
+Official implementation of **CLEAR** (ACM MM 2026), a unified multimodal model that leverages generative capabilities (image restoration) to improve visual understanding of degraded images.
+
+> Existing multimodal large models suffer significant performance drops on degraded images. CLEAR introduces an **interleaved reasoning** paradigm: the model learns to *adaptively decide* whether to invoke image restoration before answering, through a three-stage training pipeline.
+
+## Method
+
+Built on the [BAGEL](https://github.com/ByteDance-Seed/BAGEL) framework, CLEAR proposes a three-stage pipeline:
+
+1. **Stage 1 -- SFT**: Corruption-aware supervised fine-tuning with interleaved `<think>` / `<image_restore>` / `<answer>` reasoning.
+2. **Stage 2 -- Bridge Training**: A latent representation bridge that maps denoised VAE latents directly back into the LLM's token space, avoiding costly decode-reencode.
+3. **Stage 3 -- Interleaved GRPO**: Group Relative Policy Optimization with four rewards (accuracy, format, decision, latent quality) to jointly optimize reasoning, generation, and restoration decisions.
 
 <p align="center">
-  <img src="./assets/motivation.png" width="50%" />
+  <img src="./assets/pipeline.png" width="90%" />
 </p>
 
-![model](./assets/model.png)
+<details>
+<summary><b>Latent Representation Bridge (Stage 2)</b></summary>
+<p align="center">
+  <img src="./assets/bridge.png" width="70%" />
+</p>
+The bridge module directly maps denoised latent tokens into the LLM's understanding space, avoiding the two-step decode-then-reencode overhead of prior approaches.
+</details>
 
-## Key Features
+## Main Results
 
-- **SFT + GRPO Training Pipeline**: Full training pipeline including supervised fine-tuning with corruption-aware interleaved reasoning and GRPO reinforcement learning with cooperative perception-reasoning rewards.
-- **VLMEvalKit Integration**: One-line evaluation on multimodal benchmarks (MMBench, MMVet, MMStar, MMVP, CV-Bench, RealWorldQA, R-Bench, etc.) with corruption-level variants.
-- **Corruption-Aware Reasoning**: The model learns to detect image degradation and decide when to invoke `<image_restore>` for perception enhancement before answering.
+CLEAR achieves state-of-the-art performance on degraded image understanding, outperforming both closed-source and open-source models on the MMD-Bench (Hard) benchmark:
+
+| Method | MMBench | MM-Vet | MMVP | CV-Bench | MMStar | RealWorldQA | R-Bench-Dis | AVG |
+|--------|---------|--------|------|----------|--------|-------------|-------------|-----|
+| *Closed-source* | | | | | | | | |
+| GPT-4o-mini | 67.02 | 50.91 | 64.00 | 59.87 | 45.93 | 58.95 | 61.21 | 58.27 |
+| GPT-4.1-mini | 76.08 | 51.88 | 71.00 | 74.96 | 60.73 | 72.41 | 72.52 | 68.51 |
+| Gemini-2.5-Flash | 79.33 | 66.55 | 72.33 | 76.01 | 62.00 | 69.15 | 72.72 | 71.16 |
+| *Open-source unified* | | | | | | | | |
+| Emu3 | 53.71 | 21.51 | 65.00 | 58.34 | 42.06 | 52.55 | 55.15 | 49.76 |
+| Janus-Pro | 55.57 | 31.33 | 52.66 | 66.75 | 41.53 | 43.52 | 49.09 | 48.64 |
+| Bagel | 67.88 | 45.09 | 65.66 | 64.81 | 55.53 | 58.43 | 61.64 | 60.15 |
+| *CLEAR (ours)* | | | | | | | | |
+| CLEAR-SFT | 72.06 | 47.56 | 70.33 | 70.51 | 57.67 | 60.13 | 65.65 | 63.42 |
+| **CLEAR-RL** | **72.52** | **51.97** | **71.33** | **72.25** | **60.67** | **61.05** | **67.07** | **65.26** |
+
+CLEAR-RL reduces the performance drop from clean to degraded images by **27%** compared to the Bagel backbone (5.31 vs. 7.29 avg score drop).
+
+## Qualitative Examples
+
+CLEAR adaptively decides whether to invoke image restoration based on degradation severity:
+
+<p align="center">
+  <img src="./assets/qualitative.png" width="90%" />
+</p>
+
+<details>
+<summary><b>More restoration examples</b></summary>
+<p align="center">
+  <img src="./assets/additional_qualitative.png" width="90%" />
+</p>
+</details>
+
+<details>
+<summary><b>Adaptive triggering rate across degradation levels</b></summary>
+<p align="center">
+  <img src="./assets/adaptive.png" width="60%" />
+</p>
+As degradation severity increases, CLEAR triggers image restoration more frequently, demonstrating learned adaptive behavior.
+</details>
+
+---
+
+## Paper-Code Mapping
+
+| Paper Section | Code Location |
+|---|---|
+| Stage 1: SFT | `train/pretrain_unified_corruption.py` + `scripts/train_mix.sh` |
+| Stage 2: Bridge Training | `modeling/bagel/bagel.py` (`vae2llm`, `forward_cache_update_vae_from_packed_latent`) |
+| Stage 3: Interleaved GRPO | `train/grpo/interleave_grpo.py` + `scripts/train_reason_interleave_grpo.sh` |
+| Reward Functions | `train/grpo/interleave_grpo.py` (`accuracy_reward_v2`, `format_reward_v2`, `decision_reward_auto`, `latent_quality_reward`) |
+| MMD-Bench Construction | `data/corruption_datasets_create/` |
+| MMD-Bench Evaluation | `VLMEvalKit/` |
+| Interleaved Inference | `inferencer.py` (`interleave_reason_tool_condition`) |
 
 ---
 
 ## Project Structure
 
 ```
-COOPER/
+CLEAR/
 ├── modeling/                # Model architecture (BAGEL + Qwen2 + SigLIP + VAE)
 ├── data/                    # Dataset classes and configs
 │   ├── configs/             # Training dataset YAML configs
-│   ├── corruption_datasets_create/  # Data generation scripts
+│   ├── corruption_datasets_create/  # MMD-Bench data generation scripts
 │   └── interleave_datasets/         # Interleaved reasoning dataset classes
 ├── train/                   # Training code
-│   ├── pretrain_unified_corruption.py  # SFT entry point
-│   └── grpo/                # GRPO RL training
+│   ├── pretrain_unified_corruption.py  # Stage 1: SFT entry point
+│   └── grpo/                # Stage 3: GRPO RL training
 ├── scripts/                 # Launch scripts
-├── VLMEvalKit/              # Evaluation framework
+├── VLMEvalKit/              # Evaluation framework (customized)
 ├── transformers-4.54.0/     # Vendored HuggingFace Transformers (with custom modifications)
 ├── trl/                     # Vendored TRL (with custom modifications)
-├── inferencer.py            # Inference engine (shared by training and evaluation)
+├── inferencer.py            # Inference engine (interleaved reasoning + image generation)
 ├── prompts.py               # System prompt templates
+├── demo.py                  # Standalone inference demo
 └── requirements.txt
 ```
 
@@ -51,11 +127,11 @@ COOPER/
 ### 1. Environment Setup
 
 ```bash
-git clone https://github.com/zhangzef/COOPER.git
-cd COOPER
+git clone https://github.com/haoxiangzhao12138/CLEAR.git
+cd CLEAR
 
-conda create -n cooper python=3.10 -y
-conda activate cooper
+conda create -n clear python=3.10 -y
+conda activate clear
 
 pip install -r requirements.txt
 pip install flash_attn==2.5.8 --no-build-isolation
@@ -72,27 +148,21 @@ huggingface-cli download --resume-download --local-dir-use-symlinks False \
     ByteDance-Seed/BAGEL-7B-MoT --local-dir BAGEL-7B-MoT
 cd ..
 
-# (Optional) Download COOPER checkpoint for direct inference
+# (Optional) Download CLEAR checkpoint for direct inference
 cd models
 huggingface-cli download --resume-download --local-dir-use-symlinks False \
-    Starrrrrry/COOPER --local-dir COOPER
-cd ..
-
-# (Optional) Download COOPER-AMG checkpoint
-cd models
-huggingface-cli download --resume-download --local-dir-use-symlinks False \
-    Starrrrrry/COOPER-AMG --local-dir COOPER-AMG
+    CUDAOUTOFMEMORY/CLEAR --local-dir CLEAR
 cd ..
 
 # Download training data
 huggingface-cli download --resume-download --repo-type dataset \
-    Starrrrrry/COOPER_Train_Set --local-dir datasets
+    CUDAOUTOFMEMORY/MMD-Bench --local-dir datasets
 
 cd datasets
 # Merge and extract (use pigz for faster decompression if available)
-cat COOPER_Train_Set.tar.gz.part.* | pigz -d | tar xf -
+cat CLEAR_Train_Set.tar.gz.part.* | pigz -d | tar xf -
 # OR without pigz:
-# cat COOPER_Train_Set.tar.gz.part.* | gzip -dc | tar xf -
+# cat CLEAR_Train_Set.tar.gz.part.* | gzip -dc | tar xf -
 cd ..
 ```
 
@@ -100,7 +170,7 @@ cd ..
 
 ## Training
 
-### SFT (Supervised Fine-Tuning)
+### Stage 1: SFT (Supervised Fine-Tuning)
 
 Train the corruption-aware interleaved reasoning model from BAGEL:
 
@@ -116,9 +186,9 @@ Key parameters (editable in `scripts/train_mix.sh`):
 - `--lr`: Learning rate (default: 1e-5)
 - `--total_steps`: Total training steps (default: 600)
 
-### GRPO (Reinforcement Learning)
+### Stage 3: Interleaved GRPO (Reinforcement Learning)
 
-Train with cooperative perception-reasoning rewards via GRPO:
+Train with multi-reward GRPO:
 
 ```bash
 bash scripts/train_reason_interleave_grpo.sh
@@ -141,7 +211,7 @@ Key parameters (editable in `scripts/train_reason_interleave_grpo.sh`):
 
 ## Evaluation
 
-Evaluation uses a customized [VLMEvalKit](https://github.com/open-compass/VLMEvalKit) with COOPER/BAGEL model support and corruption-level benchmark variants.
+Evaluation uses a customized [VLMEvalKit](https://github.com/open-compass/VLMEvalKit) with CLEAR/BAGEL model support and corruption-level benchmark variants.
 
 ### Run Evaluation
 
@@ -160,10 +230,10 @@ Evaluation configs are JSON files in `VLMEvalKit/config/`. Example:
 ```json
 {
     "model": {
-        "COOPER": {
+        "CLEAR": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "../results/<your_checkpoint>",
+            "model_param_path": "../results/<YOUR_CHECKPOINT>",
             "reasoning_mode": "interleave",
             "max_think_token_n": 4096,
             "is_ema": false
@@ -179,7 +249,7 @@ Evaluation configs are JSON files in `VLMEvalKit/config/`. Example:
 ```
 
 Key model parameters:
-- `reasoning_mode`: `"interleave"` (COOPER full), `"text"` (text-only reasoning), or `"image"` (perception enhancement only)
+- `reasoning_mode`: `"interleave"` (CLEAR full), `"text"` (text-only reasoning), or `"image"` (perception enhancement only)
 - `max_think_token_n`: Max thinking tokens (4096 for reasoning, 256 for perception)
 - `is_ema`: Whether to load EMA weights
 
@@ -190,25 +260,32 @@ export OPENAI_API_KEY="your-api-key"
 
 ---
 
-## Results
+## MMD-Bench
 
-![main_result](./assets/main_result.png)
+We propose **MMD-Bench**, a comprehensive degradation benchmark covering 16 corruption types across 4 categories (Capture, Transmission, Environment, Post-processing) at 3 severity levels:
 
-### Cases
+<details>
+<summary><b>Corruption types visualization</b></summary>
+<p align="center">
+  <img src="./assets/corruption_vis.png" width="90%" />
+</p>
+</details>
 
-![cases](./assets/cases.png)
-
-![generation_cases](./assets/generation_cases.png)
+The benchmark generation scripts are in `data/corruption_datasets_create/`.
 
 ---
 
 ## Citation
 
 ```bibtex
-@article{zhang2025cooper,
-  title={COOPER: A Unified Model for Cooperative Perception and Reasoning in Spatial Intelligence},
+@article{zhang2026clear,
+  title={CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models},
   author={Zhang, Zefeng and Hao, Xiangzhao and Tang, Hengzhu and Zhang, Zhenyu and Sheng, Jiawei and Li, Xiaodong and Li, Zhenyang and Gao, Li and Shi, Daiting and Yin, Dawei and others},
-  journal={arXiv preprint arXiv:2512.04563},
-  year={2025}
+  journal={arXiv preprint arXiv:2604.04780},
+  year={2026}
 }
 ```
+
+## Acknowledgments
+
+CLEAR is built upon [BAGEL](https://github.com/ByteDance-Seed/BAGEL) by ByteDance Seed. We thank the open-source community for [VLMEvalKit](https://github.com/open-compass/VLMEvalKit), [HuggingFace Transformers](https://github.com/huggingface/transformers), and [TRL](https://github.com/huggingface/trl).

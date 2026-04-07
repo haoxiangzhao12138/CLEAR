@@ -10,7 +10,7 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-# 防止 CSV 读取大字段报错
+# Prevent CSV field size limit error when reading large fields
 csv.field_size_limit(sys.maxsize)
 
 # 16 degradation methods
@@ -59,7 +59,7 @@ def apply_degradation(image, method_name, intensity):
 
 
 def process_single_row(args):
-    """处理单个图片：对指定 method 施加退化"""
+    """Process a single image: apply the specified degradation method"""
     idx, original_b64, method_name = args
 
     if pd.isna(original_b64) or str(original_b64).strip() == "":
@@ -127,7 +127,7 @@ def main():
                 print(f"Skipping {output_filename}: already exists.")
                 continue
 
-            # 准备任务
+            # Prepare tasks
             tasks = [(idx, img_b64, method_name)
                      for idx, img_b64 in enumerate(df['image'])]
 

@@ -42,22 +42,6 @@ from data.data_utils import patchify
 # Global variable for decision reward smooth setting
 _decision_reward_smooth = True
 
-# import debugpy
-# try:
-#     # 5678 is the default attach port in the VS Code debug configurations. Unless a host and port are specified, host defaults to 127.0.0.1
-#     debugpy.listen(("localhost", 9501))
-#     print("Waiting for debugger attach")
-#     debugpy.wait_for_client()
-# except Exception as e:
-#     pass
-
-# import torch
-# def custom_repr(self):
-#     return f'{{Tensor:{tuple(self.shape)}}} {original_repr(self)}'
-
-# original_repr = torch.Tensor.__repr__
-# torch.Tensor.__repr__ = custom_repr
-
 
 
 @dataclass
@@ -281,13 +265,13 @@ class GRPOTrainingArguments(GRPOConfig):
         metadata={"help": "Sigma for SDE-based sampling during training."},
     )
     num_timesteps_train: int = field(
-        default=30,  # 改为 30，与 num_timesteps 接近
+        default=30,
         metadata={
             "help": "Number of timesteps for image generation during training (Denoising Reduction)."
         },
     )
     image_loss_weight: float = field(
-        default=0.3,  # 改为 0.3，增加图像权重
+        default=0.3,
         metadata={
             "help": "Weight for image GRPO loss in total loss computation."
         },
@@ -315,36 +299,36 @@ class GRPOTrainingArguments(GRPOConfig):
     )
 
 
-# ============ Reward 组件 ============
+# ============ Reward Components ============
 _image_reward_components = {}
-# accuracy 结果缓存，供 decision_reward_auto 复用（避免重复调 LLM API）
+# Accuracy result cache for decision_reward_auto reuse (avoid duplicate LLM API calls)
 _accuracy_cache = {"results": None}
 
 
 def format_reward_v2(completions, **kwargs):
     """
-    分级格式奖励（纯格式结构，不评判是否调用工具）：
-    - 0.35: 有完整的 <think>...</think>
-    - 0.35: 有完整的 <answer>...</answer>
-    - 0.3:  think 在 answer 之前（结构正确）
-    总分 [0.0, 1.0]
+    Graded format reward (pure structure check, does not judge tool invocation):
+    - 0.35: Complete <think>...</think>
+    - 0.35: Complete <answer>...</answer>
+    - 0.3:  think appears before answer (correct structure)
+    Total score range: [0.0, 1.0]
     """
     rewards = []
     for completion in completions:
-        parts = completion[3:]  # 跳过 prompt 部分（前3个元素是 system_prompt, image, question）
-        # 把所有文本段拼接
+        parts = completion[3:]  # Skip prompt part (first 3 elements are system_prompt, image, question)
+        # Concatenate all text segments
         text = " ".join(x for x in parts if isinstance(x, str))
         score = 0.0
 
-        # (1) 有完整的 think 标签
+        # (1) Has complete think tags
         if re.search(r'<think>.+?</think>', text, re.DOTALL):
             score += 0.35
 
-        # (2) 有完整的 answer 标签
+        # (2) Has complete answer tags
         if re.search(r'<answer>.+?</answer>', text, re.DOTALL):
             score += 0.35
 
-        # (3) think 在 answer 之前（结构完整性）
+        # (3) think appears before answer (structural integrity)
         think_end = text.find('</think>')
         answer_start = text.find('<answer>')
         if think_end > 0 and answer_start > think_end:
@@ -356,7 +340,7 @@ def format_reward_v2(completions, **kwargs):
 
 
 def _extract_answer_text(completion) -> str:
-    """从 completion 列表中提取 <answer>...</answer> 中的文本"""
+    """Extract text from <answer>...</answer> in completion list."""
     if not completion:
         return ""
     last_text = completion[-1] if isinstance(completion[-1], str) else ""
@@ -368,61 +352,61 @@ def _extract_answer_text(completion) -> str:
 
 def decision_reward_auto(completions, solution, question, **kwargs):
     """
-    基于结果回溯的策略决策奖励（无需难度标签）。
-    复用 accuracy_reward_v2 缓存的 LLM judge 结果来判断是否答对。
+    Outcome-based strategy decision reward (no difficulty labels needed).
+    Reuses cached LLM judge results from accuracy_reward_v2 to determine correctness.
 
-    核心设计原则：
-    - 训练数据全部是退化图像，模型应该更积极地尝试生成
-    - 不生成+答错 给负惩罚，迫使模型在不确定时倾向生成
-    - 生成+答错 仍给正奖励，鼓励探索
+    Core design principles:
+    - All training data are degraded images; model should be more aggressive about generation
+    - No-generate + wrong answer gets negative penalty, pushing model to generate when uncertain
+    - Generate + wrong answer still gets positive reward, encouraging exploration
 
-    逻辑矩阵（原始值，_decision_reward_smooth=False）：
-    | 是否恢复 | 是否答对 | 奖励 | 原因 |
-    |----------|----------|------|------|
-    | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
-    | 没恢复   | 答对了   | 0.6  | 不错，但未必是最优策略 |
-    | 恢复了   | 没答对   | 0.4  | 鼓励探索，尝试了就值得 |
-    | 没恢复   | 没答对   | -0.2 | 应该生成但没生成，需要惩罚 |
+    Reward matrix (original values, _decision_reward_smooth=False):
+    | Restored? | Correct? | Reward | Reason |
+    |-----------|----------|--------|--------|
+    | Yes       | Yes      | 1.0    | Best: correctly used tool |
+    | No        | Yes      | 0.6    | Good, but not necessarily optimal strategy |
+    | Yes       | No       | 0.4    | Encourage exploration, worth trying |
+    | No        | No       | -0.2   | Should have generated but didn't, needs penalty |
 
-    逻辑矩阵（平滑值，_decision_reward_smooth=True）：
-    | 是否恢复 | 是否答对 | 奖励 | 原因 |
-    |----------|----------|------|------|
-    | 恢复了   | 答对了   | 1.0  | 最优：正确使用了工具 |
-    | 没恢复   | 答对了   | 0.5  | 可以，但鼓励更积极生成 |
-    | 恢复了   | 没答对   | 0.5  | 中等：尝试了就值得鼓励 |
-    | 没恢复   | 没答对   | -0.2 | 最差：应该生成但没生成 |
+    Reward matrix (smooth values, _decision_reward_smooth=True):
+    | Restored? | Correct? | Reward | Reason |
+    |-----------|----------|--------|--------|
+    | Yes       | Yes      | 1.0    | Best: correctly used tool |
+    | No        | Yes      | 0.5    | OK, but encourage more aggressive generation |
+    | Yes       | No       | 0.5    | Medium: worth encouraging for trying |
+    | No        | No       | -0.2   | Worst: should have generated but didn't |
 
-    注意：reward_funcs 列表中 accuracy 必须排在 decision 前面，
-    这样 _accuracy_cache 在本函数执行时已有数据。
+    Note: accuracy must come before decision in reward_funcs list,
+    so _accuracy_cache has data when this function executes.
     """
-    # 使用全局变量 decision_reward_smooth
+    # Use global variable decision_reward_smooth
     use_smooth = _decision_reward_smooth
 
-    # 读取 accuracy_reward_v2 缓存的结果
+    # Read cached results from accuracy_reward_v2
     acc_results = _accuracy_cache.get("results")
     if acc_results is None:
-        # 如果 accuracy 没在前面跑过（不应该发生），fallback 调 LLM
+        # If accuracy didn't run first (should not happen), fallback to LLM call
         acc_results = _call_llm_judge(completions, solution, question)
 
     rewards = []
     for idx, completion in enumerate(completions):
-        parts = completion[3:]  # 跳过 prompt
+        parts = completion[3:]  # Skip prompt
         text_content = " ".join(x for x in parts if isinstance(x, str))
         did_restore = "<image_restore>" in text_content
         correct = acc_results[idx] > 0.5
 
         if use_smooth:
-            # 平滑奖励曲线
+            # Smooth reward curve
             if did_restore and correct:
-                rewards.append(1.0)       # 最优
+                rewards.append(1.0)       # Best
             elif not did_restore and correct:
-                rewards.append(0.5)       # 可以，但鼓励更积极
+                rewards.append(0.5)       # OK, but encourage more aggressive generation
             elif did_restore and not correct:
-                rewards.append(0.5)       # 尝试了就值得鼓励
+                rewards.append(0.5)       # Worth encouraging for trying
             else:
-                rewards.append(-0.2)      # 应该生成但没生成
+                rewards.append(-0.2)      # Should have generated but didn't
         else:
-            # 原始奖励曲线
+            # Original reward curve
             if did_restore and correct:
                 rewards.append(1.0)
             elif not did_restore and correct:
@@ -437,8 +421,8 @@ def decision_reward_auto(completions, solution, question, **kwargs):
 
 def _extract_vit_features(image, vit_model, vit_transform, patch_size,
                            get_position_ids_fn, max_patches, device=None):
-    """从单张 PIL Image 提取 ViT pooled feature。"""
-    # 如果没有传入 device，自动使用当前 GPU 设备
+    """Extract ViT pooled features from a single PIL Image."""
+    # Auto-select current GPU device if not provided
     if device is None:
         device = torch.cuda.current_device()
     image_tensor = vit_transform(image).to(device)
@@ -459,12 +443,12 @@ def _extract_vit_features(image, vit_model, vit_transform, patch_size,
 
 def latent_quality_reward(completions, image_name, **kwargs):
     """
-    生成图像质量 reward，支持三种模式（由 latent_reward_mode 控制）：
-    - "vae":  VAE latent 空间三指标（r_mse + r_cos + r_local）
-    - "vit":  ViT 语义特征 cosine 相似度（r_vit）
-    - "both": 四指标综合（r_mse + r_cos + r_local + r_vit）
+    Image quality reward with three modes (controlled by latent_reward_mode):
+    - "vae":  VAE latent space tri-metric (r_mse + r_cos + r_local)
+    - "vit":  ViT semantic feature cosine similarity (r_vit)
+    - "both": Four-metric aggregate (r_mse + r_cos + r_local + r_vit)
 
-    没有生成图像的样本返回 NaN（不参与该 reward 聚合）。
+    Samples without generated images return NaN (excluded from reward aggregation).
     """
 
     comp = _image_reward_components
@@ -474,7 +458,7 @@ def latent_quality_reward(completions, image_name, **kwargs):
     mode = comp.get("mode", "vae")
     clean_root = comp["clean_image_root"]
 
-    # VAE 相关组件
+    # VAE components
     need_vae = mode in ("vae", "both")
     vae_model = None
     if need_vae:
@@ -484,7 +468,7 @@ def latent_quality_reward(completions, image_name, **kwargs):
         latent_channel = comp["latent_channel"]
         mse_scale = comp.get("mse_scale", 0.5)
 
-    # ViT 相关组件
+    # ViT components
     need_vit = mode in ("vit", "both")
     vit_model = None
     if need_vit:
@@ -494,34 +478,34 @@ def latent_quality_reward(completions, image_name, **kwargs):
         vit_max_patches = comp["vit_max_patches"]
         get_position_ids_fn = comp["get_position_ids_fn"]
 
-    # 动态获取正确的设备，避免硬编码 "cuda" 导致多 GPU 死锁
-    # 在 DeepSpeed ZeRO-3 下，使用 torch.cuda.current_device() 获取当前 GPU
+    # Dynamically get the correct device to avoid hardcoding "cuda" which causes multi-GPU deadlocks
+    # Under DeepSpeed ZeRO-3, use torch.cuda.current_device() to get the current GPU
     device = torch.cuda.current_device()
 
     rewards = []
     for idx, completion in enumerate(completions):
-        # ---- 1. 从 completion 中提取生成的 latent 和 Image ----
+        # ---- 1. Extract generated latent and Image from completion ----
         gen_latent = None
         gen_image = None
         for item in completion:
             if isinstance(item, dict) and item.get("type") == "generated_latent":
                 gen_latent = item["latent"]
             elif isinstance(item, Image.Image) and gen_latent is not None:
-                # 取紧跟 latent dict 之后的第一张 Image（即生成图）
+                # Take the first Image immediately following a latent dict (i.e., the generated image)
                 gen_image = item
                 break
 
-        # vit 模式只需要 Image；vae/both 模式需要 latent
+        # vit mode only needs Image; vae/both modes need latent
         if need_vae and gen_latent is None:
             rewards.append(float('nan'))
             continue
         if need_vit and gen_image is None:
-            # 如果 vit 模式没有 Image，但 vae 模式有 latent，也尝试继续
+            # If vit mode has no Image but vae mode has latent, still try to continue
             if not need_vae:
                 rewards.append(float('nan'))
                 continue
 
-        # ---- 2. 加载清晰参考图像 ----
+        # ---- 2. Load clean reference image ----
         fname = image_name[idx]
         clean_path = os.path.join(clean_root, fname)
         if not os.path.exists(clean_path):
@@ -541,7 +525,7 @@ def latent_quality_reward(completions, image_name, **kwargs):
             clean_image = Image.open(clean_path).convert("RGB")
 
             with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                # ---- 3a. VAE latent 子指标 ----
+                # ---- 3a. VAE latent sub-metrics ----
                 r_mse = r_cos = r_local = 0.0
                 if need_vae and gen_latent is not None:
                     clean_tensor = vae_transform(clean_image).unsqueeze(0).to(device)
@@ -577,11 +561,11 @@ def latent_quality_reward(completions, image_name, **kwargs):
                     )
                     r_local = per_token_cos.clamp(min=0).mean().item()
 
-                # ---- 3b. ViT 语义子指标 ----
+                # ---- 3b. ViT semantic sub-metrics ----
                 r_vit = 0.0
                 if need_vit and gen_image is not None:
                     try:
-                        # 确保 vit_model 在 eval 模式，避免 ZeRO-3 同步问题
+                        # Ensure vit_model is in eval mode to avoid ZeRO-3 synchronization issues
                         vit_model.eval()
                         gen_feat = _extract_vit_features(
                             gen_image, vit_model, vit_transform,
@@ -601,7 +585,7 @@ def latent_quality_reward(completions, image_name, **kwargs):
                         traceback.print_exc()
                         r_vit = 0.0
 
-            # ---- 4. 按模式综合得分 ----
+            # ---- 4. Aggregate score by mode ----
             if mode == "vae":
                 score = 0.3 * r_mse + 0.3 * r_cos + 0.4 * r_local
             elif mode == "vit":
@@ -620,8 +604,8 @@ def latent_quality_reward(completions, image_name, **kwargs):
 
 def _call_llm_judge(completions, solutions, questions):
     """
-    调用 LLM 判断答案正确性。
-    从原 accuracy_reward_with_llm 中提取的核心逻辑。
+    Call LLM to judge answer correctness.
+    Core logic extracted from accuracy_reward_with_llm.
     """
     base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com")
     api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
@@ -731,11 +715,11 @@ def _call_llm_judge(completions, solutions, questions):
 
 def accuracy_reward_v2(completions, solution, question, **kwargs):
     """
-    答案正确性奖励。
-    全量调用 LLM judge 判断，结果缓存到 _accuracy_cache 供 decision_reward_auto 复用。
+    Answer correctness reward.
+    Calls LLM judge for all samples; results are cached in _accuracy_cache for decision_reward_auto reuse.
     """
     rewards = _call_llm_judge(completions, solution, question)
-    # 缓存结果，decision_reward_auto 按顺序在后面执行时直接读取
+    # Cache results so decision_reward_auto can read them when it runs next
     _accuracy_cache["results"] = rewards
     # Log API success rate for debugging
     nonzero_count = sum(1 for r in rewards if r > 0)
@@ -856,7 +840,7 @@ def main(grpo_args, training_args, model_args):
         use_flex=training_args.use_flex,
     )
 
-    # ---- 初始化 reward 组件 ----
+    # ---- Initialize reward components ----
     # Build active reward list from switches
     reward_switch_map = {
         "accuracy": grpo_args.enable_reward_accuracy,
@@ -867,15 +851,15 @@ def main(grpo_args, training_args, model_args):
     active_reward_names = [name for name in grpo_args.reward_funcs if reward_switch_map.get(name, True)]
 
     if "latent_quality" in active_reward_names:
-        # 在 ZeRO-3 环境下，ViT 模型参数被分片，调用时会触发 all-gather 导致死锁
-        # 解决方案：如果使用 ViT reward，创建一个独立的 ViT 副本
+        # Under ZeRO-3, ViT model parameters are sharded; calling it triggers all-gather causing deadlocks
+        # Solution: if using ViT reward, create an independent ViT copy
         if model_args.latent_reward_mode in ("vit", "both"):
-            # 创建 ViT 的深拷贝，避免 ZeRO-3 分片问题
+            # Deep copy ViT to avoid ZeRO-3 sharding issues
             vit_model_for_reward = deepcopy(model.vit_model)
             vit_model_for_reward.eval()
             for param in vit_model_for_reward.parameters():
                 param.requires_grad = False
-            # 移动到当前 GPU
+            # Move to current GPU
             vit_model_for_reward = vit_model_for_reward.to(torch.cuda.current_device())
             print("[GRPO Config] Created independent ViT copy for reward calculation")
         else:
@@ -884,13 +868,13 @@ def main(grpo_args, training_args, model_args):
         _image_reward_components.update({
             "clean_image_root": model_args.clean_image_root,
             "mode": model_args.latent_reward_mode,
-            # VAE 组件
+            # VAE components
             "vae_model": vae_model,
             "vae_transform": vae_transform,
             "latent_patch_size": model_args.latent_patch_size,
             "latent_channel": vae_config.z_channels,
             "mse_scale": model_args.mse_scale,
-            # ViT 组件 - 使用独立副本避免 ZeRO-3 死锁
+            # ViT components - use independent copy to avoid ZeRO-3 deadlocks
             "vit_model": vit_model_for_reward,
             "vit_transform": vit_transform,
             "vit_patch_size": model_args.vit_patch_size,
@@ -938,12 +922,12 @@ def main(grpo_args, training_args, model_args):
         # output_record_file=f"./sample_output/{training_args.run_name}.txt",
     )
 
-    # 设置 reward 权重：以答案正确性为核心，decision 鼓励自适应生成
+    # Set reward weights: answer correctness as the core, decision encourages adaptive generation
     weight_map = {
         "accuracy": 0.75,
         "format": 0.1,
         "decision": 0.15,
-        "latent_quality": 0.0,  # 保留 key 兼容，但权重为 0（不鼓励照片级重建）
+        "latent_quality": 0.0,  # Keep key for compatibility, but weight is 0 (no photo-level reconstruction incentive)
     }
     reward_weights = [weight_map[name] for name in active_reward_names]
     trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)

@@ -4,7 +4,6 @@ import wandb
 import yaml
 from copy import deepcopy
 from dataclasses import dataclass, field
-from time import time
 import time
 import torch
 import torch.distributed as dist
@@ -409,26 +408,17 @@ class TrainingArguments:
 
 
 def main():
-    # 1. 初始化分布式环境和设备
-    start_time = time.time()
+    # 1. Initialize distributed environment and device
     assert torch.cuda.is_available()
     dist.init_process_group("nccl", timeout=datetime.timedelta(hours=1))
     device = dist.get_rank() % torch.cuda.device_count()
     torch.cuda.set_device(device)
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 初始化分布式环境和设备: {end_time - start_time:.4f}秒")
 
-    # 2. 解析参数
-    start_time = time.time()
+    # 2. Parse arguments
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 解析命令行参数: {end_time - start_time:.4f}秒")
 
-    # 3. 设置日志和wandb
-    start_time = time.time()
+    # 3. Set up logging and wandb
     if dist.get_rank() == 0:
         os.makedirs(training_args.results_dir, exist_ok=True)
         os.makedirs(training_args.checkpoint_dir, exist_ok=True)
@@ -449,12 +439,8 @@ def main():
     logger.info(f"Training arguments {training_args}")
     logger.info(f"Model arguments {model_args}")
     logger.info(f"Data arguments {data_args}")
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 设置日志和wandb: {end_time - start_time:.4f}秒")
 
-    # 4. 自动恢复逻辑处理
-    start_time = time.time()
+    # 4. Handle auto-resume logic
     if training_args.auto_resume:
         resume_from = get_latest_ckpt(training_args.checkpoint_dir)
         if resume_from is None:
@@ -474,20 +460,12 @@ def main():
             finetune_from_ema = training_args.finetune_from_ema
         else:
             finetune_from_ema = False
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 处理自动恢复逻辑: {end_time - start_time:.4f}秒")
 
-    # 5. 设置随机种子
-    start_time = time.time()
+    # 5. Set random seed
     seed = training_args.global_seed * dist.get_world_size() + dist.get_rank()
     set_seed(seed)
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 设置随机种子: {end_time - start_time:.4f}秒")
 
-    # 6. 准备模型（语言模型、视觉模型等）
-    start_time = time.time()
+    # 6. Prepare models (language model, visual model, etc.)
     if training_args.finetune_from_hf:
         llm_config = Qwen2Config.from_json_file(
             os.path.join(model_args.model_path, "llm_config.json")
@@ -499,29 +477,17 @@ def main():
     llm_config.qk_norm = model_args.llm_qk_norm
     llm_config.tie_word_embeddings = model_args.tie_word_embeddings
     # llm_config.gradient_checkpointing = True
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 加载和初始化语言模型config: {end_time - start_time:.4f}秒")
 
-    start_time = time.time()
     if training_args.finetune_from_hf:
         language_model = Qwen2ForCausalLM(llm_config)
     else:
         language_model = Qwen2ForCausalLM.from_pretrained(
             model_args.llm_path, config=llm_config
         )
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 加载语言模型: {end_time - start_time:.4f}秒")
 
-    start_time = time.time()
     if training_args.copy_init_moe:
         language_model.init_moe()
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 初始化语言模型: {end_time - start_time:.4f}秒")
 
-    start_time = time.time()
     if training_args.visual_und:
         if training_args.finetune_from_hf:
             vit_config = SiglipVisionConfig.from_json_file(
@@ -548,11 +514,6 @@ def main():
             )
         )
 
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 加载和初始化视觉模型: {end_time - start_time:.4f}秒")
-
-    start_time = time.time()
     config = BagelConfig(
         visual_gen=training_args.visual_gen,
         visual_und=training_args.visual_und,
@@ -572,12 +533,8 @@ def main():
 
     if training_args.visual_und:
         model.vit_model.vision_model.embeddings.convert_conv2d_to_linear(vit_config)
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 加载和初始化Bagel: {end_time - start_time:.4f}秒")
 
-    # 7. 设置Tokenizer
-    start_time = time.time()
+    # 7. Set up tokenizer
     tokenizer = Qwen2Tokenizer.from_pretrained(
         model_args.model_path if training_args.finetune_from_hf else model_args.llm_path
     )
@@ -586,32 +543,11 @@ def main():
         model.language_model.resize_token_embeddings(len(tokenizer))
         model.config.llm_config.vocab_size = len(tokenizer)
         model.language_model.config.vocab_size = len(tokenizer)
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 初始化Tokenizer: {end_time - start_time:.4f}秒")
 
-    # 8. 冻结参数设置
-    start_time = time.time()
+    # 8. Configure parameter freezing
     if training_args.freeze_vae and training_args.visual_gen:
         for param in vae_model.parameters():
             param.requires_grad = False
-
-    # if training_args.train_only_llm2vae:
-    #     for param in model.language_model.parameters():
-    #         param.requires_grad = False
-    #     for name, param in model.named_parameters():
-    #         if "llm2vae" not in name:
-    #             param.requires_grad = False
-    #             print(f"设置可训练参数: {name}")
-    # elif training_args.train_only_generator:
-    #     for name, param in model.named_parameters():
-    #         if "moe_gen" in name:
-    #             param.requires_grad = True
-    #             print(f"设置可训练参数: {name}")
-    # if training_args.freeze_llm:
-    #     model.language_model.eval()
-    #     for param in model.language_model.parameters():
-    #         param.requires_grad = False
 
     if training_args.freeze_llm in ["not", "all", "not_gen", "not_llm2vae"]:
         if training_args.freeze_llm == "not":
@@ -641,12 +577,7 @@ def main():
         for param in model.vit_model.parameters():
             param.requires_grad = False
 
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 配置参数冻结: {end_time - start_time:.4f}秒")
-
-    # 9. 设置FSDP和加载检查点
-    start_time = time.time()
+    # 9. Set up FSDP and load checkpoint
     fsdp_config = FSDPConfig(
         sharding_strategy=training_args.sharding_strategy,
         backward_prefetch=training_args.backward_prefetch,
@@ -676,12 +607,8 @@ def main():
         print(fsdp_model)
         for name, param in model.named_parameters():
             print(name, param.requires_grad)
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 配置FSDP和加载检查点: {end_time - start_time:.4f}秒")
 
-    # 10. 初始化优化器和调度器
-    start_time = time.time()
+    # 10. Initialize optimizer and scheduler
     optimizer = torch.optim.AdamW(
         fsdp_model.parameters(),
         lr=training_args.lr,
@@ -702,12 +629,8 @@ def main():
         )
     else:
         raise ValueError
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 初始化优化器和调度器: {end_time - start_time:.4f}秒")
 
-    # 11. 恢复训练状态（优化器、调度器等）
-    start_time = time.time()
+    # 11. Resume training state (optimizer, scheduler, etc.)
     if resume_model_only:
         train_step = 0
         data_status = None
@@ -720,12 +643,8 @@ def main():
                 fsdp_config,
             )
         )
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 恢复训练状态: {end_time - start_time:.4f}秒")
 
-    # 12. 加载数据集和数据加载器
-    start_time = time.time()
+    # 12. Load dataset and data loader
     with open(data_args.dataset_config_file, "r") as stream:
         dataset_meta = yaml.safe_load(stream)
     dataset_config = DataConfig(grouped_datasets=dataset_meta)
@@ -767,22 +686,13 @@ def main():
         prefetch_factor=data_args.prefetch_factor,
     )
 
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 加载数据集和数据加载器: {end_time - start_time:.4f}秒")
-
-    # 13. 训练前准备（模型设备移动等）
-    start_time = time.time()
+    # 13. Pre-training preparation (move models to device, etc.)
     if training_args.visual_gen:
         vae_model.to(device).eval()
     fsdp_model.train()
     ema_model.eval()
-    end_time = time.time()
-    if dist.get_rank() == 0:
-        print(f"[计时] 训练前模型准备: {end_time - start_time:.4f}秒")
 
-    # 14. 训练循环
-    start_time_train_loop = time.time()  # 记录整个训练循环的开始时间
+    # 14. Training loop
     logger.info(
         f"Training for {training_args.total_steps} steps, starting at {train_step}..."
     )
@@ -796,8 +706,8 @@ def main():
                     if "padded_images" in data:
                         data["padded_latent"] = vae_model.encode(data.pop("padded_images"))
                     else:
-                        # 如果当前 batch 没有生成任务，显式设置为 None 或者不传
-                        # 模型内部通常会处理 data["padded_latent"] 缺失的情况 (loss mask 为 0)
+                        # If the current batch has no generation task, explicitly set to None
+                        # The model internally handles the missing data["padded_latent"] case (loss mask is 0)
                         data["padded_latent"] = None
             loss_dict = fsdp_model(**data)
 
@@ -823,19 +733,19 @@ def main():
         if training_args.visual_gen:
             mse = loss_dict["mse"]
             
-            # 判断是否有真实的生成任务
-            # 必须同时满足：模型返回了 mse，数据里有 index，且 index 不为空
+            # Check whether there is a real generation task
+            # All conditions must be met: model returned mse, data has indexes, and indexes are non-empty
             has_real_mse = (mse is not None) and ("mse_loss_indexes" in data) and (len(data["mse_loss_indexes"]) > 0)
             
             if has_real_mse:
-                # --- Case 1: 正常计算 (Rank B) ---
+                # --- Case 1: Normal computation (Rank B) ---
                 total_mse_tokens = torch.tensor(
                     len(data["mse_loss_indexes"]), device=device
                 )
                 dist.all_reduce(total_mse_tokens, op=dist.ReduceOp.SUM)
                 
-                # 这里 mse 是 [N, D] 的 Tensor
-                # 先 mean(dim=-1) 变成 [N], 再 sum 变成标量
+                # mse is an [N, D] Tensor
+                # First mean(dim=-1) to get [N], then sum to get a scalar
                 mse_reduced = mse.mean(dim=-1).sum() * dist.get_world_size() / total_mse_tokens
                 
                 loss_dict["mse"] = mse_reduced.detach()
@@ -843,16 +753,16 @@ def main():
                 
             elif mse is not None:
                 # --- Case 2: Dummy Pass (Rank A) ---
-                # ！！！关键点！！！
-                # 不要新建 tensor，直接使用模型返回的 mse (它带有梯度图)
-                # 此时 mse 是标量 0.0，直接加到 loss 里
+                # --- Key point ---
+                # Do not create a new tensor; use the mse returned by the model (it carries the computation graph)
+                # Here mse is scalar 0.0, add it directly to loss
                 
                 loss = loss + mse * training_args.mse_weight 
-                loss_dict["mse"] = mse.detach() # 仅用于日志打印
+                loss_dict["mse"] = mse.detach() # Only for logging
                 total_mse_tokens = torch.tensor(0, device=device)
                 
             else:
-                # Case 3: 理论上不应到达这里 (除非 visual_gen=False)
+                # Case 3: Should not reach here in theory (unless visual_gen=False)
                 loss_dict["mse"] = torch.tensor(0.0, device=device)
                 total_mse_tokens = torch.tensor(0, device=device)
         else:
@@ -882,7 +792,7 @@ def main():
         scheduler.step()
         fsdp_ema_update(ema_model, fsdp_model, decay=training_args.ema)
 
-        # 日志记录
+        # Logging
         if curr_step % training_args.log_every == 0:
             total_samples = torch.tensor(len(data["sample_lens"]), device=device)
             dist.all_reduce(total_samples, op=dist.ReduceOp.SUM)
@@ -922,24 +832,8 @@ def main():
                 wandb.log(wandb_log, step=curr_step)
             start_time = time.time()
 
-        # 记录数据状态
-        # if data_status is None:
-        #     data_status = {}
-        # for item in data_indexes:
-        #     if item["dataset_name"] not in data_status.keys():
-        #         data_status[item["dataset_name"]] = {}
-        #     data_status[item["dataset_name"]][item["worker_id"]] = item["data_indexes"]
-
-        # 保存检查点
+        # Save checkpoint
         if curr_step > 0 and curr_step % training_args.save_every == 0:
-            save_start = time.time()
-            # if dist.get_rank() == 0:
-            #     gather_list = [None] * dist.get_world_size()
-            # else:
-            #     gather_list = None
-            # print(f"data status: {data_status}")
-            # print(f"gather list: {gather_list}")
-            # dist.gather_object(data_status, gather_list, dst=0)
 
             FSDPCheckpoint.fsdp_save_ckpt(
                 ckpt_dir=training_args.checkpoint_dir,
@@ -950,22 +844,10 @@ def main():
                 scheduler=scheduler,
                 logger=logger,
                 fsdp_config=fsdp_config,
-                # data_status=gather_list,
             )
-            if dist.get_rank() == 0:
-                print(
-                    f"[计时] 第{curr_step}步保存检查点耗时: {time.time() - save_start:.4f}秒"
-                )
 
         if curr_step >= training_args.total_steps:
             break
-
-    # 训练循环结束计时
-    end_time_train_loop = time.time()
-    if dist.get_rank() == 0:
-        print(
-            f"[计时] 整个训练循环耗时: {end_time_train_loop - start_time_train_loop:.4f}秒"
-        )
 
     logger.info("Done!")
     if dist.get_rank() == 0:

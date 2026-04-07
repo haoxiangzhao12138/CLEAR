@@ -309,20 +309,20 @@ def format_reward(completions, **kwargs):
 
 def accuracy_reward_with_llm(completions, solution, question, **kwargs):
     """
-    并行处理多个 prompt 请求，返回布尔结果列表
+    Process multiple prompt requests in parallel and return a list of boolean results.
 
     Args:
-        system_prompt: 系统指令
-        base_url: 模型服务地址
-        api_key: API 认证密钥
-        prompts: 需要处理的 prompt 列表
-        model: 模型名称（必需参数，即使自托管服务也需要占位值）
-        max_retries: 最大重试次数
-        timeout: 单次请求超时时间(秒)
-        max_workers: 最大并发线程数
+        system_prompt: System instruction
+        base_url: Model service URL
+        api_key: API authentication key
+        prompts: List of prompts to process
+        model: Model name (required parameter, even for self-hosted services a placeholder value is needed)
+        max_retries: Maximum number of retries
+        timeout: Timeout per request in seconds
+        max_workers: Maximum number of concurrent threads
 
     Returns:
-        list[bool]: 每个 prompt 的处理结果（True/False）
+        list[bool]: Processing result for each prompt (True/False)
     """
     base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
     api_key = "-"
@@ -363,11 +363,11 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
                     model=model,
                     messages=messages,
                     max_tokens=512,
-                    temperature=0.0,  # 确保输出确定性
+                    temperature=0.0,  # Ensure deterministic output
                     n=1,
                 )
 
-                # 解析模型响应
+                # Parse model response
                 content = response.choices[0].message.content.strip().lower()
                 if content == "true":
                     return True
@@ -376,19 +376,19 @@ def accuracy_reward_with_llm(completions, solution, question, **kwargs):
 
             except (APIConnectionError, RateLimitError, APIStatusError) as e:
                 print(f"Error: {e}")
-                # 可重试的错误类型
+                # Retryable error types
                 if attempt == max_retries - 1:
                     return False
-                time.sleep(2**attempt)  # 指数退避
+                time.sleep(2**attempt)  # Exponential backoff
             except Exception as e:
                 print(f"Error: {e}")
-                # 其他不可恢复错误
+                # Other non-recoverable errors
                 if attempt == max_retries - 1:
                     return False
 
         return False
 
-    # 并行处理所有请求
+    # Process all requests in parallel
     max_retries = 5
     timeout = 30
     max_workers = 32

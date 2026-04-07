@@ -42,31 +42,31 @@ def save_list_with_images(
     data_idx: Optional[str] = None,
 ) -> str:
     """
-    处理包含字符串和PIL图像的列表，将图像保存到唯一文件夹，并生成JSON记录。
-    额外特性：
-      - JSON 中加入 `answer` 与 `rewards`
-      - 若提供 step，则保存的图片文件名包含步数（如 step000123_1.png）
+    Process a list containing strings and PIL images, save images to a unique folder, and generate a JSON record.
+    Additional features:
+      - JSON includes `answer` and `rewards`
+      - If step is provided, the saved image filenames include the step number (e.g., step000123_1.png)
 
-    参数:
-        input_list: 包含字符串和 PIL.Image 对象的混合列表
-        target_dir: 目标根目录路径
-        step: 当前训练步数（可选；若提供将写入图片文件名前缀）
-        answer: 答案字符串（可选；若未提供会尝试从 input_list 中提取 <answer>...</answer>）
-        rewards: 奖励列表（可选；将直接写入 JSON）
+    Args:
+        input_list: Mixed list containing strings and PIL.Image objects
+        target_dir: Target root directory path
+        step: Current training step (optional; if provided, will be written as image filename prefix)
+        answer: Answer string (optional; if not provided, will attempt to extract <answer>...</answer> from input_list)
+        rewards: Reward list (optional; will be directly written to JSON)
 
-    返回:
-        创建的文件夹路径
+    Returns:
+        Path to the created folder
     """
-    # 1) 创建唯一文件夹
+    # 1) Create unique folder
     folder_name = f"step{step}_{data_idx}_session_{uuid.uuid4().hex}"
     folder_path = os.path.join(target_dir, folder_name)
     os.makedirs(folder_path, exist_ok=True)
 
-    # 2) 处理项：保存图片并替换为相对路径；顺带尝试抽取 <answer>...</answer>
+    # 2) Process items: save images and replace with relative paths; also try to extract <answer>...</answer>
     processed_list: List[Union[str, str]] = []
     image_counter = 1
 
-    # 若未显式传入 answer，则尝试从文本中抽取
+    # If answer was not explicitly provided, try to extract from text
     answer_pred = ""
     ans_pat = re.compile(r"<answer>(.*?)</answer>", flags=re.DOTALL)
     last_text = input_list[-1] if isinstance(input_list[-1], str) else ""
@@ -76,28 +76,28 @@ def save_list_with_images(
     raw_image.save(os.path.join(folder_path, "raw_image.png"), "PNG")
     for item in input_list:
         if isinstance(item, dict):
-            continue  # 跳过 latent dict，它只用于 reward 计算
+            continue  # Skip latent dict, it is only used for reward computation
         elif isinstance(item, Image.Image):
-            # 生成文件名（包含步数前缀）
+            # Generate filename (with step prefix)
             if step is not None:
                 filename = f"{image_counter}.png"
             else:
                 filename = f"{image_counter}.png"
             filepath = os.path.join(folder_path, filename)
             item.save(filepath, "PNG")
-            processed_list.append(filename)  # 仅保存相对名
+            processed_list.append(filename)  # Save relative name only
             image_counter += 1
         else:
             processed_list.append(item)
 
-    # 3) 写出 JSON
+    # 3) Write out JSON
     json_obj = {
         "question": question,
-        "items": processed_list,  # 与旧版兼容：原先的列表
+        "items": processed_list,  # Backward compatible: original list
         "answer": answer,
         "answer_pred": answer_pred,
         "reward_func_names": reward_func_names,
-        "rewards": rewards if rewards is not None else [],  # 默认空列表
+        "rewards": rewards if rewards is not None else [],  # Default empty list
     }
     json_path = os.path.join(folder_path, "data.json")
     with open(json_path, "w", encoding="utf-8") as f:
@@ -134,17 +134,17 @@ def nanstd(tensor: torch.Tensor) -> torch.Tensor:
 
 def _to_bf16_cpu(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     """
-    将 state_dict 中的所有浮点张量转换为 CPU 的 bfloat16；
-    其它 dtype（int/bool/uint/long 等）仅搬到 CPU，不改 dtype。
+    Convert all floating-point tensors in state_dict to CPU bfloat16;
+    other dtypes (int/bool/uint/long etc.) are only moved to CPU without changing dtype.
     """
     out = {}
     for name, tensor in state_dict.items():
         t = tensor.detach()
         if torch.is_floating_point(t):
-            # 一步到位：迁移到 CPU 并转 bfloat16；copy=True 避免修改原 tensor
+            # Move to CPU and convert to bfloat16 in one step; copy=True avoids modifying original tensor
             t = t.to(dtype=torch.bfloat16, device="cpu", copy=True)
         else:
-            # 非浮点保持 dtype，仅搬到 CPU
+            # Non-floating-point: keep dtype, only move to CPU
             t = t.to(device="cpu", copy=True)
         out[name] = t.contiguous()
     return out
@@ -216,7 +216,7 @@ def split_tensor_dict(
 def shuffle_and_split_tensor_dict(
     tensor_dict: Mapping[str, Optional[Union[torch.Tensor, List]]],
 ):
-    # 取第一个非 None 的值，确定 batch 大小与设备
+    # Get the first non-None value to determine batch size and device
     first_val = tensor_dict["advantages"]
     if isinstance(first_val, torch.Tensor):
         batch = first_val.shape[0]
@@ -225,10 +225,10 @@ def shuffle_and_split_tensor_dict(
         perm_list = perm.tolist()
     else:  # list
         batch = len(first_val)
-        perm = torch.randperm(batch)  # CPU 即可
+        perm = torch.randperm(batch)  # CPU is fine
         perm_list = perm.tolist()
 
-    # 同步打乱：Tensor 用张量索引；List 用重排后的列表
+    # Synchronized shuffle: Tensor uses tensor indexing; List uses reordered list
     shuffled: Dict[str, Optional[Union[torch.Tensor, List]]] = {}
     for k, v in tensor_dict.items():
         if v is None:
@@ -242,7 +242,7 @@ def shuffle_and_split_tensor_dict(
         else:
             raise TypeError(f"Unsupported value type for key {k}: {type(v)}")
 
-    # 按样本切成单样本块（通常 per_device_batch=1）
+    # Split into single-sample chunks (typically per_device_batch=1)
     out = []
     for i in range(batch):
         out.append(
@@ -255,7 +255,7 @@ def shuffle_and_split_tensor_dict(
                 for k, v in shuffled.items()
             }
         )
-    return out  # 默认chunk_size为1，因为一般per_device_batch=1
+    return out  # Default chunk_size is 1, since per_device_batch is typically 1
 
 
 def selective_log_softmax(logits_list, index_list):
@@ -313,9 +313,9 @@ def selective_log_softmax(logits_list, index_list):
 @torch.no_grad()
 def average_entropy_from_logits_list(logits_list: list[torch.Tensor]) -> torch.Tensor:
     """
-    计算 logits_list 的平均 token 级熵（对所有样本、所有时间步取平均），单位为 nats。
-    每个 logits 的形状为 [T, V]（T: 序列长度，V: 词表大小）。
-    返回标量 tensor。
+    Compute the average token-level entropy of logits_list (averaged over all samples and timesteps), in nats.
+    Each logits has shape [T, V] (T: sequence length, V: vocabulary size).
+    Returns a scalar tensor.
     """
     if len(logits_list) == 0:
         return torch.tensor(0.0)
@@ -325,16 +325,16 @@ def average_entropy_from_logits_list(logits_list: list[torch.Tensor]) -> torch.T
 
     for logits in logits_list:  # logits: [T, V]
         if logits.dtype in (torch.float32, torch.float64):
-            # 稳定写法：H_t = logsumexp(z_t) - sum_i softmax(z_t)_i * z_{t,i}
+            # Numerically stable: H_t = logsumexp(z_t) - sum_i softmax(z_t)_i * z_{t,i}
             lse = torch.logsumexp(logits, dim=-1)  # [T]
             logp = logits - lse.unsqueeze(-1)  # [T, V]
             H = -(logp.exp() * logp).sum(dim=-1)  # [T]
         else:
-            # bf16/fp16：逐行到 fp32 再算更稳定
+            # bf16/fp16: convert row-by-row to fp32 for better numerical stability
             per_row = []
             for row in logits:  # [V]
                 row_logp = F.log_softmax(row.float(), dim=-1)  # [V]
-                per_row.append(-(row_logp.exp() * row_logp).sum())  # 标量
+                per_row.append(-(row_logp.exp() * row_logp).sum())  # scalar
             H = torch.stack(per_row).to(logits.device)  # [T]
 
         total_H += H.sum()
@@ -438,11 +438,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
     def _generate_and_score_completions(
             self, inputs: list[dict[str, Union[torch.Tensor, Any]]]
         ) -> dict[str, Union[torch.Tensor, Any]]:
-        # 获取当前设备（CPU/GPU）
+        # Get current device (CPU/GPU)
         device = self.accelerator.device
-        # 确定当前是训练模式还是评估模式
+        # Determine current mode: training or evaluation
         mode = "eval" if self.control.should_evaluate else "train"
-        # 初始化一个列表，用于存储处理后的提示 token ID
+        # Initialize a list for storing processed prompt token IDs
         input_list = []
         id_list = []
 
@@ -453,7 +453,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             id_list.append(example["data_id"])
 
         start_time = time.time()
-        # --- 生成补全 (Completion Generation) ---
+        # --- Completion Generation ---
         with unwrap_model_for_generation(
             self.model_wrapped,
             self.accelerator,
@@ -461,7 +461,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         ) as bare_model:
             bare_model.eval()
 
-            # ---------- 2. 构造 InterleaveInferencer -----------
+            # ---------- 2. Build InterleaveInferencer -----------
             inferencer = InterleaveInferencer(
                 model=bare_model,
                 vae_model=self.vae_model,
@@ -472,7 +472,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 device=device,
             )
 
-            # ---------- 4. 推理（可 batch，也可逐条） ------------
+            # ---------- 4. Inference (batch or per-sample) ------------
             with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 input_dict_list = []
                 output_list = []
@@ -480,11 +480,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 completions_tokens = []
                 sequence_length = []
                 
-                # [修改点 2] 初始化 image_restore 的计数列表
+                # [Modification 2] Initialize image_restore count list
                 image_restore_num_list = []
-                all_trajectories = []  # [新增] 用于存储图像生成轨迹
+                all_trajectories = []  # [New] Store image generation trajectories
 
-                # [修改点 3] 定义目标 Token 和 Answer 正则
+                # [Modification 3] Define target token and answer regex
                 restore_token = "<image_restore>"
                 result_pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
 
@@ -503,36 +503,36 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         sde_sigma=self.args.sde_sigma if self.args.use_flow_grpo else 0.0,
                         record_trajectory=self.args.use_flow_grpo,
                         num_timesteps_sde=self.args.num_timesteps_train,  # SDE steps (10) for trajectory
-                    )  # 返回 Tuple[List[Union[str, Image]], List[Dict]]
+                    )  # Returns Tuple[List[Union[str, Image]], List[Dict]]
                     output_list.append(output)
                     if self.args.use_flow_grpo:
                         all_trajectories.append(trajectories)
-                    # 用 search 而非 fullmatch：当模型走 image_restore 路径时，
-                    # output[-1] 是第二段 gen_text（不以 <think> 开头），
-                    # fullmatch 要求整个字符串匹配，会导致所有 image_restore 样本
-                    # 被错误标记为 is_eos=False，在 mask_truncated_completions=True 时
-                    # 这些样本 loss 全部归零，完全无法参与训练。
-                    # 改用 search：只要字符串中包含完整的 <answer>...</answer> 即视为完成。
+                    # Use search instead of fullmatch: when the model takes the image_restore path,
+                    # output[-1] is the second gen_text segment (does not start with <think>),
+                    # fullmatch requires the entire string to match, which would cause all image_restore samples
+                    # to be incorrectly marked as is_eos=False. When mask_truncated_completions=True,
+                    # all loss for these samples would be zeroed out, completely preventing them from participating in training.
+                    # Using search: as long as the string contains a complete <answer>...</answer>, it is considered finished.
                     match = re.search(r"<answer>.*?</answer>", output[-1], re.DOTALL)
                     if match:
                         is_eos.append(True)
                     else:
                         is_eos.append(False)
 
-                    # [修改点 4] 统计 <image_restore> 出现的次数
+                    # [Modification 4] Count occurrences of <image_restore>
                     restore_num = 0
-                    # 从第3个元素开始遍历（跳过 prompt 部分）
+                    # Start from the 3rd element (skip the prompt part)
                     for i in range(3, len(output)):
                         item = output[i]
                         if isinstance(item, str):
-                            # 直接统计字符串中 token 出现的次数，不需要正则
+                            # Count occurrences of the token in the string directly, no regex needed
                             restore_num += item.count(restore_token)
                     
                     image_restore_num_list.append(restore_num)
 
                 input_dict_list = self.output_transfer(
                     output_list, device, id_list
-                )  # 转换输出为 dict{str: tensor}
+                )  # Convert output to dict{str: tensor}
 
                 for i in range(len(input_dict_list)):
                     completions_tokens.append(input_dict_list[i]["completions_tokens"])
@@ -541,17 +541,17 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 sequence_length = torch.tensor(sequence_length).to(device)
                 is_eos = torch.tensor(is_eos).to(device)
                 
-                # [修改点 5] 将统计结果转换为 Tensor
+                # [Modification 5] Convert statistics to Tensor
                 image_restore_nums = torch.tensor(image_restore_num_list).to(device)
 
         # print(f"interleave_reason_tool_condition time: {time.time() - start_time}")
 
-        # --- 计算 Log Probabilities (for KL divergence or ratio) ---
-        # 禁用梯度计算，因为我们只关心 log probabilities
+        # --- Compute Log Probabilities (for KL divergence or ratio) ---
+        # Disable gradient computation, since we only care about log probabilities
         #
-        # 当 num_iterations > 1 时需要 old_per_token_logps 用于重要性采样比率（PPO clip）;
-        # 当 beta > 0 时需要 ref_per_token_logps 用于 KL 惩罚。
-        # 两者都可以用当前模型（更新前）的 logps，只需计算一次。
+        # When num_iterations > 1, old_per_token_logps is needed for importance sampling ratio (PPO clip);
+        # When beta > 0, ref_per_token_logps is needed for KL penalty.
+        # Both can use the current model's (pre-update) logps, requiring only one computation.
         with torch.no_grad():
             need_logps = self.num_iterations > 1 or self.beta != 0.0
             if need_logps:
@@ -560,101 +560,101 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 )
             else:
                 old_per_token_logps = None
-            # KL 约束：用生成时刻的模型 logps 作为参考（无需额外 ref_model，零显存开销）
+            # KL constraint: use generation-time model logps as reference (no extra ref_model, zero memory overhead)
             ref_per_token_logps = old_per_token_logps if self.beta != 0.0 else None
 
         start_time = time.time()
-        # --- 计算奖励 (Compute Rewards) ---
-        # 初始化一个张量来存储每个提示-补全对在每个奖励函数下的得分
+        # --- Compute Rewards ---
+        # Initialize a tensor to store scores for each prompt-completion pair under each reward function
         rewards_per_func = torch.zeros(
             len(output_list), len(self.reward_funcs), device=device
         )
-        # 遍历所有的奖励函数
+        # Iterate over all reward functions
         for i, (reward_func, reward_func_name) in enumerate(
             zip(
-                self.reward_funcs,  # 奖励函数列表
-                self.reward_func_names,  # 奖励函数名称列表
+                self.reward_funcs,  # Reward function list
+                self.reward_func_names,  # Reward function name list
             )
         ):
-            # 使用 profiling_context 记录此奖励函数的耗时
+            # Use profiling_context to record the time spent in this reward function
             with profiling_context(self, reward_func_name):
-                # 如果奖励函数是一个可调用的 Python 函数
-                # 提取除 prompt 和 completion 外的其他输入字段
+                # If the reward function is a callable Python function
+                # Extract input fields other than prompt and completion
                 keys = [key for key in inputs[0] if key not in ["image"]]
                 reward_kwargs = {
                     key: [example[key] for example in inputs] for key in keys
                 }
-                # 调用奖励函数
+                # Call the reward function
                 output_reward_func = reward_func(
                     completions=output_list, **reward_kwargs
                 )
-                # 将 None 值替换为 NaN
+                # Replace None values with NaN
                 output_reward_func = [
                     reward if reward is not None else torch.nan
                     for reward in output_reward_func
                 ]
-                # 将结果存入 rewards_per_func
+                # Store results in rewards_per_func
                 rewards_per_func[:, i] = torch.tensor(
                     output_reward_func, dtype=torch.float32, device=device
                 )
         # print(f"reward_funcs time: {time.time() - start_time}")
 
-        # --- 检查并警告 ---
-        # 检查是否有任何一行的所有奖励函数都返回了 NaN（即 None）
+        # --- Check and Warn ---
+        # Check if any row has all reward functions returning NaN (i.e., None)
         if torch.isnan(rewards_per_func).all(dim=1).any():
-            # 获取第一个全为 NaN 的行索引
+            # Get the index of the first all-NaN row
             nan_row_idx = (
                 torch.isnan(rewards_per_func).all(dim=1).nonzero(as_tuple=True)[0][0]
             )
-            # 构建该行的详细信息用于警告
+            # Build detailed info for the row for warning
             row_reward_kwargs = {
                 key: value[nan_row_idx] for key, value in reward_kwargs.items()
             }
             row_reward_kwargs["question"] = inputs[nan_row_idx]["question"]
             row_reward_kwargs["completion"] = output[nan_row_idx]
-            # 发出警告
+            # Issue warning
             warnings.warn(
                 f"All reward functions returned None for the following kwargs: {row_reward_kwargs}. "
                 "Please ensure that at least one reward function returns a valid reward."
             )
 
-        # --- 聚合和归一化奖励 (Aggregate and Normalize Rewards) ---
+        # --- Aggregate and Normalize Rewards ---
         # Gather the reward per function: this part is crucial, because the rewards are normalized per group and the
         # completions may be distributed across processes
-        # 在多 GPU/多进程设置中，收集所有进程的奖励分数
+        # In multi-GPU/multi-process setup, gather reward scores from all processes
         rewards_per_func = gather(rewards_per_func)
         # Apply weights to each reward function's output and sum
-        # 以答案正确性为核心的奖励聚合：
-        # - 不再使用 no_image_penalty（由 decision_reward 独立负责是否生成的决策）
-        # - NaN 值（如未生成图像时的 latent_quality）替换为 0，不额外惩罚
+        # Answer-accuracy-centric reward aggregation:
+        # - No longer uses no_image_penalty (decision_reward independently handles generation decisions)
+        # - NaN values (e.g., latent_quality when no image was generated) are replaced with 0, no extra penalty
         weights = self.reward_weights.to(device).unsqueeze(0)           # (1, num_funcs)
         weighted = rewards_per_func * weights                           # (N, num_funcs)
         weighted = weighted.nan_to_num(0.0)
 
-        # 计算总奖励
+        # Compute total rewards
         rewards = weighted.sum(dim=1)  # (N,)
 
-        # Compute grouped-wise rewards (按组计算均值和标准差)
-        # 将奖励重塑为 (num_unique_prompts, num_generations_per_prompt)
-        # 然后计算每组的均值和标准差
+        # Compute grouped-wise rewards (compute per-group mean and std)
+        # Reshape rewards to (num_unique_prompts, num_generations_per_prompt)
+        # Then compute per-group mean and std
         mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
         std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
 
-        # Normalize the rewards to compute the advantages (计算优势)
-        # 将每组的均值和标准差扩展回原始 batch 大小
+        # Normalize the rewards to compute the advantages
+        # Expand per-group mean and std back to the original batch size
         mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(
             self.num_generations, dim=0
         )
         std_grouped_rewards = std_grouped_rewards.repeat_interleave(
             self.num_generations, dim=0
         )
-        # 计算优势：当前奖励 - 组内均值
+        # Compute advantages: current reward - group mean
         advantages = rewards - mean_grouped_rewards
-        # 可选：对优势进行缩放（除以组内标准差）
+        # Optional: scale advantages (divide by per-group std)
         if self.scale_rewards:
-            advantages = advantages / (std_grouped_rewards + 1e-4)  # 加上小值防止除零
+            advantages = advantages / (std_grouped_rewards + 1e-4)  # Add small value to prevent division by zero
 
-        # Slice to keep only the local part of the data (切片，只保留当前进程的数据)
+        # Slice to keep only the local part of the data
         process_slice = slice(
             self.accelerator.process_index * len(inputs),
             (self.accelerator.process_index + 1) * len(inputs),
@@ -701,8 +701,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                 )
                 image_advantages = image_advantages[process_slice_advantages]
 
-        # --- 记录指标 (Log Metrics) ---
-        # 记录 token 数量
+        # --- Log Metrics ---
+        # Record token count
         if mode == "train":
             self.state.num_input_tokens_seen += (
                 self.accelerator.gather_for_metrics(sequence_length.sum()).sum().item()
@@ -710,7 +710,7 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         self._metrics[mode]["num_tokens"] = [self.state.num_input_tokens_seen]
 
         # log completion lengths, mean, min, max
-        # 记录补全长度统计信息
+        # Record completion length statistics
         completions_tokens = self.accelerator.gather_for_metrics(completions_tokens)
         self._metrics[mode]["completions/mean_length"].append(
             completions_tokens.float().mean().item()
@@ -723,48 +723,48 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         )
 
         # identify sequences that terminated with EOS and log their lengths
-        # 记录以 EOS 结尾的序列长度统计信息
+        # Record EOS-terminated sequence length statistics
         agg_terminated_with_eos = self.accelerator.gather_for_metrics(is_eos)
         self._metrics[mode]["completions/clipped_ratio"].append(
             1 - agg_terminated_with_eos.float().mean().item()
         )
 
-        # [修改点 6] 记录 image_restore 的统计信息
+        # [Modification 6] Record image_restore statistics
         image_restore_nums = self.accelerator.gather_for_metrics(image_restore_nums)
         self._metrics[mode]["image_restore_nums"].append(
             image_restore_nums.float().mean().item()
         )
         
-        # 将 total_gen_nums 更新为仅包含 restore 次数
+        # Update total_gen_nums to include only restore count
         self._metrics[mode]["total_gen_nums"].append(
             image_restore_nums.float().mean().item()
         )
 
         # Calculate mean reward per function, but only for samples where the function was applied (non-NaN values)
-        # 记录每个奖励函数的平均得分和标准差
+        # Record mean and std of each reward function
         for i, reward_func_name in enumerate(self.reward_func_names):
             mean_rewards = torch.nanmean(rewards_per_func[:, i]).item()
             self._metrics[mode][f"rewards/{reward_func_name}/mean"].append(mean_rewards)
             std_rewards = nanstd(rewards_per_func[:, i]).item()
             self._metrics[mode][f"rewards/{reward_func_name}/std"].append(std_rewards)
 
-        # 记录整体奖励的均值和标准差
+        # Record overall reward mean and std
         self._metrics[mode]["reward"].append(mean_grouped_rewards.mean().item())
         self._metrics[mode]["reward_std"].append(std_grouped_rewards.mean().item())
 
-        # Log prompt and completion texts (记录文本日志，用于调试或可视化)
+        # Log prompt and completion texts (for debugging or visualization)
         for i, name in enumerate(self.reward_func_names):
             self._textual_logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
 
-        # --- 返回结果 ---
-        # 返回一个字典，包含生成和评分过程中的关键张量
+        # --- Return Results ---
+        # Return a dict containing key tensors from the generation and scoring process
         return {
-            "input_dict_list": input_dict_list,  # 输入数据
-            "advantages": advantages,  # 计算出的优势值
-            "image_advantages": image_advantages,  # 图像单独的优势值（如果启用）
-            "is_eos": is_eos,  # 是否以 EOS 结束
-            "old_per_token_logps": old_per_token_logps,  # 旧的 log probabilities
-            "ref_per_token_logps": ref_per_token_logps,  # 参考模型的 log probabilities
+            "input_dict_list": input_dict_list,  # Input data
+            "advantages": advantages,  # Computed advantage values
+            "image_advantages": image_advantages,  # Separate image advantage values (if enabled)
+            "is_eos": is_eos,  # Whether terminated with EOS
+            "old_per_token_logps": old_per_token_logps,  # Old log probabilities
+            "ref_per_token_logps": ref_per_token_logps,  # Reference model log probabilities
             # Flow-GRPO: trajectories for per-step backward in _compute_loss
             "image_trajectories": all_trajectories if self.args.use_flow_grpo else None,
         }
@@ -890,9 +890,9 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         #   → gradients flow: img_loss → v_pred → attention → text repr
         #                      text_loss → logits → attention → image repr
         #
-        # 修改说明：
-        # 1. Flow GRPO 使用 image_advantages（latent_quality 单独计算的优势）
-        # 2. step 选择策略：round_robin/weighted/random
+        # Modification notes:
+        # 1. Flow GRPO uses image_advantages (advantage computed solely from latent_quality)
+        # 2. Step selection strategy: round_robin/weighted/random
         # ================================================================
         device = self.accelerator.device
 
@@ -1026,11 +1026,11 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         variance = sde_sigma ** 2 * dt_val
 
                         # Compute log probability with per-element mean normalization
-                        # 使用 .mean() 而非 .sum()：
-                        #   数学上 ratio = exp(log_p_new - log_p_old) 只要两端一致就正确
-                        #   但 .sum() 会让梯度量级 ∝ D (latent 维度数 ~65536)
-                        #   而 text loss 是 per-token mean，梯度量级 ∝ 1
-                        #   用 .mean() 让 image 梯度量级与 text 对齐，训练更稳定
+                        # Using .mean() instead of .sum():
+                        #   Mathematically ratio = exp(log_p_new - log_p_old) is correct as long as both sides are consistent
+                        #   But .sum() makes gradient magnitude proportional to D (latent dimension ~65536)
+                        #   While text loss is per-token mean, with gradient magnitude proportional to 1
+                        #   Using .mean() aligns image gradient magnitude with text, making training more stable
                         sq_error = ((x_next - mu_new) ** 2 / variance)
                         # Clip squared error to prevent overflow/explosion
                         sq_error = torch.clamp(sq_error, min=-1e8, max=1e8)
@@ -1094,8 +1094,8 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
             per_token_kl = per_token_kl * mask
 
         # PPO-clip loss
-        # num_iterations > 1: 用生成时刻缓存的 logps（模型已更新，ratio ≠ 1）
-        # num_iterations == 1: 用当前 forward 的 detach（ratio = 1，梯度仍通过 per_token_logps 流动）
+        # num_iterations > 1: use cached logps from generation time (model has been updated, ratio != 1)
+        # num_iterations == 1: use detach of current forward (ratio = 1, gradient still flows through per_token_logps)
         old_per_token_logps = (
             inputs["old_per_token_logps"][0]
             if inputs["old_per_token_logps"] is not None
@@ -1251,31 +1251,31 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         """
-        覆写默认 _save：
-        - 无论模型类型，统一只保存 state_dict（safetensors）
-        - 在保存前把所有浮点参数转换为 bfloat16（在 CPU 上保存）
-        - 保留 training_args 方便复现（可按需删去）
+        Override default _save:
+        - Regardless of model type, uniformly save only state_dict (safetensors)
+        - Convert all floating-point parameters to bfloat16 before saving (saved on CPU)
+        - Preserve training_args for reproducibility (can be removed as needed)
         """
         output_dir = output_dir or self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        # 若上层未传入 state_dict（例如普通后端），这里自己拿一份
+        # If state_dict was not passed from above (e.g., normal backend), get one here
         if state_dict is None:
             target = self.deepspeed if self.is_deepspeed_enabled else self.model
-            # Deepspeed ZeRO-3 需要 stage3_gather_16bit_weights_on_model_save=True 才能聚合到单机
+            # Deepspeed ZeRO-3 requires stage3_gather_16bit_weights_on_model_save=True to gather weights to a single node
             state_dict = self.accelerator.get_state_dict(target)
 
-        # 统一转成 CPU bfloat16（仅浮点）
+        # Uniformly convert to CPU bfloat16 (floating-point only)
         state_dict = _to_bf16_cpu(state_dict)
 
-        # 仅 rank 0 保存：DeepSpeed ZeRO-3 下只有 rank 0 拿到完整权重，
-        # 其他 rank 的 state_dict 为空，写入会覆盖正确文件导致 checkpoint 损坏
+        # Only rank 0 saves: under DeepSpeed ZeRO-3, only rank 0 has the complete weights;
+        # other ranks have empty state_dict, writing would overwrite the correct file and corrupt the checkpoint
         if self.is_world_process_zero():
-            # 仅保存一个 safetensors 权重文件
+            # Save only one safetensors weight file
             st.save_file(
                 state_dict,
                 os.path.join(output_dir, "model.safetensors"),
-                metadata={"format": "pt"},  # 可选元数据
+                metadata={"format": "pt"},  # Optional metadata
             )
             print(f"Saved model checkpoint to {output_dir}.")
         del state_dict

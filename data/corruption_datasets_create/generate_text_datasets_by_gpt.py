@@ -19,23 +19,23 @@ from tqdm import tqdm
 API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
 API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
-# 生成模型
+# Generation model
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
 
 # ---- Paths ----
-# 图片根目录
+# Image root directory
 IMAGE_ROOT_DIR = "./datasets/processed_dataset/sft/images"
 
-# 输入数据 (原始的大文件)
+# Input data (original large file)
 INPUT_JSONL = "./datasets/processed_dataset/sft/sft_data.jsonl"
 
-# 输出数据 (采样并生成CoT后的文件)
+# Output data (file with sampled and CoT-generated entries)
 OUTPUT_JSONL = "./datasets/processed_dataset/sft/sft_pure_text.jsonl"
 
 # ---- Sampling ----
-# 需要采样的数量
+# Number of samples to draw
 SAMPLE_SIZE = 12000
-# 随机种子 (固定种子以保证每次运行选中的数据尽可能一致，或者设为 None 完全随机)
+# Random seed (fixed seed for reproducibility across runs, or set to None for full randomness)
 RANDOM_SEED = 42
 
 # ---- Concurrency ----
@@ -130,7 +130,7 @@ def encode_image_to_b64(path: str) -> Optional[str]:
         return None
 
 def extract_tag_content(text: str, tag: str) -> Optional[str]:
-    """提取 <tag>...</tag> 之间的内容"""
+    """Extract content between <tag>...</tag> tags"""
     if not text:
         return None
     if tag not in TAG_RE_CACHE:
@@ -143,12 +143,12 @@ def extract_tag_content(text: str, tag: str) -> Optional[str]:
 
 def resolve_image_path(image_filename: str) -> Optional[str]:
     basename = os.path.basename(image_filename)
-    # 尝试直接拼接
+    # Try direct concatenation
     full_path = os.path.join(IMAGE_ROOT_DIR, basename)
     if os.path.exists(full_path):
         return full_path
     
-    # 尝试原始路径
+    # Try original path
     full_path_2 = os.path.join(IMAGE_ROOT_DIR, image_filename)
     if os.path.exists(full_path_2):
         return full_path_2
@@ -173,10 +173,10 @@ def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     question = conversations[0]["value"].replace("<image>", "").strip()
-    # 保留原始 GT 用于参考
+    # Keep original GT for reference
     gt_answer = conversations[1]["value"].strip()
 
-    # 处理图片
+    # Handle image
     image_path = resolve_image_path(image_filename)
     if not image_path:
         return None 
@@ -206,7 +206,7 @@ def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     # --- Basic Format Check ---
-    # 只要包含了 <answer> 标签，我们就认为数据格式可用
+    # As long as the <answer> tag is present, we consider the data format usable
     pred_answer = extract_tag_content(response_text, "answer")
     is_valid_format = bool(pred_answer)
 
@@ -215,12 +215,12 @@ def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     save_item = None
     if is_valid_format:
         save_item = dict(item)
-        # 用新生成的 CoT 回答替换旧的回答
+        # Replace old answer with newly generated CoT answer
         save_item["conversations"] = [
             conversations[0],
             {"from": "gpt", "value": response_text}
         ]
-        # 保存原始 GT (可选)
+        # Save original GT (optional)
         save_item["original_gt"] = gt_answer
 
     return {
@@ -251,7 +251,7 @@ def load_processed_ids(output_jsonl: str) -> set:
 
 def load_and_sample_items(input_jsonl: str, skip_ids: set, sample_size: int):
     """
-    读取所有数据，排除已处理的，然后进行采样
+    Read all data, exclude already processed items, then sample
     """
     print("Reading input file...")
     candidates = []
@@ -282,13 +282,13 @@ def load_and_sample_items(input_jsonl: str, skip_ids: set, sample_size: int):
 
 
 def process_dataset():
-    # 1. 加载断点（如果之前跑过一部分）
+    # 1. Load checkpoint (if a partial run was done previously)
     processed_ids = load_processed_ids(OUTPUT_JSONL)
     print(f"Resuming: {len(processed_ids)} items already processed in output file.")
 
-    # 2. 读取并采样
-    # 注意：如果这只是想跑满 12000 个，这里可以传 SAMPLE_SIZE - len(processed_ids)
-    # 但为了简单起见，这里假设每次运行都是为了凑齐 SAMPLE_SIZE，如果文件里已有，会先跳过
+    # 2. Read and sample
+    # Note: To fill exactly 12000, you could pass SAMPLE_SIZE - len(processed_ids) here.
+    # For simplicity, we assume each run aims to reach SAMPLE_SIZE; if the file already has some, they are skipped first.
     remaining_quota = max(0, SAMPLE_SIZE - len(processed_ids))
     
     if remaining_quota == 0:

@@ -10,7 +10,7 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-# 防止 CSV 读取大字段报错
+# Prevent CSV field size limit error when reading large fields
 csv.field_size_limit(sys.maxsize)
 
 DEGRADATION_CONFIG = {
@@ -51,14 +51,14 @@ TARGET_FILES = [
     "RealWorldQA.tsv"
 ]
 
-# 修改：新的强度映射和命名后缀
+# Modified: new intensity mapping and naming suffixes
 INTENSITY_MAP = {
     0.9: '_LOW_LEVEL_HIGH',
     0.45: '_LOW_LEVEL_MID',
     0.23: '_LOW_LEVEL_LOW'
 }
 
-# 预计算权重
+# Pre-compute weights
 ALL_METHODS_WITH_WEIGHTS = []
 for category, methods in DEGRADATION_CONFIG.items():
     for method_name, details in methods.items():
@@ -92,30 +92,30 @@ def apply_degradation_Benchmark(image, method_name, intensity):
 
 def process_single_row(args):
     """
-    单个图片处理函数，用于线程池
+    Single image processing function, used by the thread pool
     """
     idx, original_b64 = args
     
-    # 结果容器，默认值为原图
+    # Result container, default value is the original image
     row_result = {
         '_LOW_LEVEL_HIGH': original_b64,
         '_LOW_LEVEL_MID': original_b64,
         '_LOW_LEVEL_LOW': original_b64
     }
 
-    # 1. 检查数据有效性
+    # 1. Check data validity
     if pd.isna(original_b64) or str(original_b64).strip() == "":
         return idx, row_result
 
-    # 2. 解码
+    # 2. Decode
     image = base64_to_cv2(original_b64)
     if image is None:
         return idx, row_result
 
-    # 3. 随机选择方法
+    # 3. Randomly select method
     selected_method_name = np.random.choice(METHOD_NAMES, p=PROBABILITIES)
 
-    # 4. 生成三个强度
+    # 4. Generate three intensity levels
     for intensity, suffix in INTENSITY_MAP.items():
         degraded_img = apply_degradation_Benchmark(image, selected_method_name, intensity)
         row_result[suffix] = cv2_to_base64(degraded_img)
@@ -165,12 +165,12 @@ def main():
             print(f"Skipping {filename}: No 'image' column.")
             continue
 
-        # 准备任务
+        # Prepare tasks
         tasks = []
         for idx, img_b64 in enumerate(df['image']):
             tasks.append((idx, img_b64))
         
-        # 准备结果容器
+        # Prepare result containers
         processed_data = {
             '_LOW_LEVEL_HIGH': [None] * len(df),
             '_LOW_LEVEL_MID': [None] * len(df),
@@ -179,20 +179,20 @@ def main():
 
         print(f"Processing {len(tasks)} images in {filename}...")
         
-        # 线程池执行
+        # Thread pool execution
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = list(tqdm(executor.map(process_single_row, tasks), total=len(tasks), unit="img"))
 
-        # 填回数据
+        # Fill back data
         for idx, row_res in results:
             for suffix, b64_val in row_res.items():
                 processed_data[suffix][idx] = b64_val
 
-        # 保存文件
+        # Save files
         print(f"Saving outputs for {filename}...")
         base_name_no_ext = os.path.splitext(filename)[0]
         
-        # 修改：对应的保存后缀列表
+        # Modified: corresponding list of save suffixes
         target_suffixes = ['_LOW_LEVEL_HIGH', '_LOW_LEVEL_MID', '_LOW_LEVEL_LOW']
         
         for suffix in target_suffixes:
@@ -203,7 +203,7 @@ def main():
             output_path = os.path.join(output_dir, output_filename)
             
             new_df.to_csv(output_path, sep='\t', index=False)
-            # print(f"Saved {output_filename}") # 减少刷屏，可选开启
+            # print(f"Saved {output_filename}") # Reduce log spam, optional to enable
         
         print(f"Done with {filename}.\n")
 

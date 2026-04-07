@@ -44,8 +44,8 @@ vit_config.num_hidden_layers = vit_config.num_hidden_layers - 1
 # VAE loading
 vae_model, vae_config = load_ae(local_path=os.path.join(model_path, "ae.safetensors"))
 vae_model = vae_model.to(
-    device=device,  # 与主模型同卡
-    dtype=torch.bfloat16,  # ↙️ 关键：统一成 bfloat16
+    device=device,  # Same GPU as the main model
+    dtype=torch.bfloat16,  # Key: unify to bfloat16
 ).eval()
 # Bagel config preparing
 config = BagelConfig(

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# 记录开始时间
+# Record start time
 start_time=$(date +%s)
 
-# 说明：
-# 1. 移除了 --verbose 后面的反斜杠
-# 2. 只有 MME 数据集时，不需要 --judge 参数，MME 是规则评测
+# Notes:
+# 1. Removed the backslash after --verbose
+# 2. With only the MME dataset, the --judge parameter is not needed; MME uses rule-based evaluation
 torchrun \
     --nproc-per-node=8 \
     --master_port=29503 \
@@ -14,11 +14,11 @@ torchrun \
     --judge gpt-4-0125 \
     --verbose
 
-# 记录结束时间
+# Record end time
 end_time=$(date +%s)
 duration=$((end_time - start_time))
 hours=$((duration / 3600))
 minutes=$(( (duration % 3600) / 60 ))
 seconds=$((duration % 60))
 
-echo "总运行时间: ${hours}小时 ${minutes}分钟 ${seconds}秒"
+echo "Total runtime: ${hours}h ${minutes}m ${seconds}s"
