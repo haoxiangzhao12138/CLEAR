@@ -15,7 +15,7 @@
   </a>
 </p>
 
-Official implementation of **CLEAR** (ACM MM 2026), a unified multimodal model that leverages generative capabilities (image restoration) to improve visual understanding of degraded images.
+Official implementation of **CLEAR**, a unified multimodal model that leverages generative capabilities (image restoration) to improve visual understanding of degraded images.
 
 > Existing multimodal large models suffer significant performance drops on degraded images. CLEAR introduces an **interleaved reasoning** paradigm: the model learns to *adaptively decide* whether to invoke image restoration before answering, through a three-stage training pipeline.
 
