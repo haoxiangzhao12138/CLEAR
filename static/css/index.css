@@ -1,0 +1,77 @@
+/* Custom styles for CLEAR project page */
+.publication-title {
+  font-family: 'Google Sans', sans-serif;
+  font-weight: 700;
+}
+.publication-authors {
+  font-family: 'Google Sans', sans-serif;
+}
+.publication-authors sup {
+  font-size: 0.7em;
+}
+.hero-body {
+  padding-bottom: 1rem;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+table th, table td {
+  border: 1px solid #ddd;
+  padding: 6px 10px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+table th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+}
+.content figure {
+  margin: 1.5rem auto;
+  text-align: center;
+}
+.content figure img {
+  max-width: 100%;
+}
+.bibtex-box {
+  background: #f5f5f5;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  position: relative;
+}
+.bibtex-box pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  background: #e0e0e0;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.copy-btn:hover {
+  background: #d0d0d0;
+}
+.link-block a {
+  margin: 0 0.3rem;
+}
+.best-result {
+  font-weight: 700;
+}
+.highlight-row {
+  background: #ffffdd;
+}
+.section-group td:first-child {
+  text-align: left;
+  font-weight: 600;
+  font-style: italic;
+  background: #f0f4ff;
+}

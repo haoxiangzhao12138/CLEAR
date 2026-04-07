@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLEAR: Unlocking Generative Potential for Degraded Image Understanding</title>
+  <meta name="description" content="CLEAR leverages generative capabilities (image restoration) to improve visual understanding of degraded images in unified multimodal models.">
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="static/css/index.css">
+</head>
+
+<body>
+
+<!-- ======== Hero / Title ======== -->
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop has-text-centered">
+      <h1 class="title is-2 publication-title">
+        CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models
+      </h1>
+
+      <div class="is-size-5 publication-authors" style="margin-top: 1rem;">
+        <span>Zefeng Zhang<sup>1,2</sup>*</span>,
+        <span>Xiangzhao Hao<sup>1,2</sup>*</span>,
+        <span>Hengzhu Tang<sup>1,2</sup></span>,
+        <span>Zhenyu Zhang<sup>1,2</sup></span>,
+        <span>Jiawei Sheng<sup>1,2</sup></span>,
+        <span>Xiaodong Li<sup>1,2</sup></span>,
+        <span>Zhenyang Li<sup>1,2</sup></span>,
+        <span>Li Gao<sup>1</sup></span>,
+        <span>Daiting Shi<sup>1</sup></span>,
+        <span>Dawei Yin<sup>1</sup></span>
+      </div>
+
+      <div class="is-size-6 publication-authors" style="margin-top: 0.5rem;">
+        <span><sup>1</sup>Baidu Inc.</span>&nbsp;&nbsp;
+        <span><sup>2</sup>Harbin Institute of Technology</span>
+      </div>
+      <div class="is-size-7" style="margin-top: 0.3rem; color: #666;">
+        *Equal Contribution
+      </div>
+
+      <!-- Links -->
+      <div class="column has-text-centered" style="margin-top: 1rem;">
+        <div class="publication-links link-block">
+          <a class="button is-rounded is-dark" href="https://arxiv.org/abs/YOUR_ARXIV_ID" target="_blank">
+            <span class="icon"><i class="ai ai-arxiv"></i></span>
+            <span>Paper</span>
+          </a>
+          <a class="button is-rounded is-dark" href="https://github.com/YOUR_ORG/CLEAR" target="_blank">
+            <span class="icon"><i class="fab fa-github"></i></span>
+            <span>Code</span>
+          </a>
+          <a class="button is-rounded is-dark" href="https://huggingface.co/YOUR_HF_ORG/CLEAR" target="_blank">
+            <span class="icon">&#129303;</span>
+            <span>Model</span>
+          </a>
+          <a class="button is-rounded is-dark" href="https://huggingface.co/datasets/YOUR_HF_ORG/CLEAR_Train_Set" target="_blank">
+            <span class="icon">&#129303;</span>
+            <span>Data</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Motivation Figure ======== -->
+<section class="section" style="padding-top: 1rem;">
+  <div class="container is-max-desktop has-text-centered">
+    <figure>
+      <img src="static/images/motivation.png"
+           alt="Motivation: existing multimodal models suffer performance drops on degraded images"
+           style="max-width: 75%;">
+      <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+        <b>Figure 1.</b> Existing multimodal models suffer significant performance drops on degraded images.
+        CLEAR learns to adaptively invoke image restoration before answering when degradation is severe.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ======== Abstract ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Abstract</h2>
+    <div class="content has-text-justified">
+      <p>
+        Unified multimodal models (UMMs) that integrate both visual understanding and generation have achieved remarkable success.
+        However, their performance degrades substantially when encountering degraded images common in real-world scenarios
+        (e.g., noise, blur, low resolution). We propose <b>CLEAR</b>, a framework that unlocks the generative potential of
+        UMMs to enhance degraded image understanding. CLEAR introduces an <b>interleaved reasoning</b> paradigm where the
+        model learns to adaptively decide whether to invoke image restoration before answering, through a three-stage
+        training pipeline: (1) <b>Supervised Fine-Tuning</b> with corruption-aware interleaved reasoning data,
+        (2) <b>Bridge Training</b> that maps denoised VAE latents directly into the LLM's understanding space via a
+        latent representation bridge, and (3) <b>Interleaved GRPO</b> with multi-reward optimization (accuracy, format,
+        decision, and latent quality rewards) that jointly optimizes reasoning, generation, and adaptive restoration decisions.
+        We also introduce <b>MMD-Bench</b>, a comprehensive benchmark covering 16 corruption types at 3 severity levels.
+        Experiments show that CLEAR significantly improves robustness to image degradation while maintaining strong
+        performance on clean images, reducing the clean-to-degraded performance drop by 27% compared to the backbone model.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Method Overview ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Method</h2>
+    <div class="content has-text-justified">
+      <p>
+        Built on the <a href="https://github.com/ByteDance-Seed/BAGEL" target="_blank">BAGEL</a> unified multimodal framework,
+        CLEAR proposes a three-stage training pipeline:
+      </p>
+      <ul>
+        <li><b>Stage 1 &mdash; SFT:</b> Corruption-aware supervised fine-tuning teaches the model to reason about
+          degradation using interleaved <code>&lt;think&gt;</code> / <code>&lt;image_restore&gt;</code> / <code>&lt;answer&gt;</code> tokens.</li>
+        <li><b>Stage 2 &mdash; Bridge Training:</b> A latent representation bridge maps denoised VAE latents directly into
+          the LLM&rsquo;s token space, avoiding costly decode-reencode.</li>
+        <li><b>Stage 3 &mdash; Interleaved GRPO:</b> Group Relative Policy Optimization with four reward signals
+          (accuracy, format, decision, latent quality) jointly optimizes the model&rsquo;s reasoning, generation,
+          and adaptive restoration decisions.</li>
+      </ul>
+    </div>
+
+    <div class="has-text-centered">
+      <figure>
+        <img src="static/images/pipeline.png"
+             alt="CLEAR pipeline: three-stage training"
+             style="max-width: 95%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 2.</b> Overview of the CLEAR training pipeline.
+          <b>Stage 1</b> (SFT) trains corruption-aware interleaved reasoning with CE + MSE + Distill losses.
+          <b>Stage 3</b> (Interleaved GRPO) uses multi-reward optimization combining standard GRPO and Flow-GRPO.
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Bridge ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Latent Representation Bridge</h2>
+    <div class="content has-text-justified">
+      <p>
+        A key challenge in using generative restoration for understanding is bridging the generated latent representations
+        back into the LLM&rsquo;s input space. Prior approaches decode to pixels and re-encode, incurring significant overhead.
+        CLEAR proposes a <b>latent representation bridge</b> that directly maps denoised VAE tokens into the LLM&rsquo;s
+        understanding space.
+      </p>
+    </div>
+    <div class="has-text-centered">
+      <figure>
+        <img src="static/images/bridge.png"
+             alt="Latent Representation Bridge vs Decode-Reencode"
+             style="max-width: 70%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 3.</b> <b>Left:</b> Decode-Reencode requires full VAE decode + ViT/VAE re-encoding.
+          <b>Right:</b> Our Latent Representation Bridge directly maps denoised latents into the LLM&rsquo;s token space.
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Main Results ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Main Results</h2>
+    <p class="has-text-centered is-size-6" style="margin-bottom: 1rem;">
+      Results under <b>Hard</b> degradation. R-Bench-Dis is an existing degraded-image benchmark; the remaining six are from MMD-Bench.
+    </p>
+
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>MMBench</th>
+            <th>MM-Vet</th>
+            <th>MMVP</th>
+            <th>CV-Bench</th>
+            <th>MMStar</th>
+            <th>RealWorldQA</th>
+            <th>R-Bench-Dis</th>
+            <th>AVG</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="9" style="text-align:left; font-weight:600; background:#f0f4ff; font-style:italic;">Closed-source models</td>
+          </tr>
+          <tr>
+            <td>GPT-4o-mini</td>
+            <td>67.02</td><td>50.91</td><td>64.00</td><td>59.87</td><td>45.93</td><td>58.95</td><td>61.21</td><td>58.27</td>
+          </tr>
+          <tr>
+            <td>GPT-4.1-mini</td>
+            <td>76.08</td><td>51.88</td><td>71.00</td><td>74.96</td><td>60.73</td><td>72.41</td><td>72.52</td><td>68.51</td>
+          </tr>
+          <tr>
+            <td>Gemini-2.5-Flash</td>
+            <td>79.33</td><td>66.55</td><td>72.33</td><td>76.01</td><td>62.00</td><td>69.15</td><td>72.72</td><td>71.16</td>
+          </tr>
+          <tr>
+            <td colspan="9" style="text-align:left; font-weight:600; background:#f0f4ff; font-style:italic;">Open-source unified models</td>
+          </tr>
+          <tr>
+            <td>Emu3</td>
+            <td>53.71</td><td>21.51</td><td>65.00</td><td>58.34</td><td>42.06</td><td>52.55</td><td>55.15</td><td>49.76</td>
+          </tr>
+          <tr>
+            <td>Janus-Pro</td>
+            <td>55.57</td><td>31.33</td><td>52.66</td><td>66.75</td><td>41.53</td><td>43.52</td><td>49.09</td><td>48.64</td>
+          </tr>
+          <tr>
+            <td>Bagel</td>
+            <td>67.88</td><td>45.09</td><td>65.66</td><td>64.81</td><td>55.53</td><td>58.43</td><td>61.64</td><td>60.15</td>
+          </tr>
+          <tr>
+            <td colspan="9" style="text-align:left; font-weight:600; background:#f0f4ff; font-style:italic;">CLEAR variants (Bagel backbone)</td>
+          </tr>
+          <tr>
+            <td>Text-only CoT</td>
+            <td>63.62</td><td>48.30</td><td>70.33</td><td>64.18</td><td>56.93</td><td>53.98</td><td>62.82</td><td>60.02</td>
+          </tr>
+          <tr>
+            <td>CLEAR-SFT</td>
+            <td><u>72.06</u></td><td>47.56</td><td><u>70.33</u></td><td><u>70.51</u></td><td><u>57.67</u></td><td><u>60.13</u></td><td><u>65.65</u></td><td><u>63.42</u></td>
+          </tr>
+          <tr class="highlight-row">
+            <td><b>CLEAR-RL</b></td>
+            <td><b>72.52</b></td><td><b>51.97</b></td><td><b>71.33</b></td><td><b>72.25</b></td><td><b>60.67</b></td><td><b>61.05</b></td><td><b>67.07</b></td><td><b>65.26</b></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Robustness -->
+    <h3 class="title is-4 has-text-centered" style="margin-top: 2rem;">Robustness Analysis</h3>
+    <p class="has-text-centered is-size-6" style="margin-bottom: 1rem;">
+      Clean and Hard scores are averaged over the six MMD-Bench benchmarks. Drop = Clean &minus; Hard.
+    </p>
+    <div style="overflow-x: auto; max-width: 500px; margin: 0 auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Clean</th>
+            <th>Hard</th>
+            <th>Drop (&darr;)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Bagel</td>
+            <td>66.86</td><td>59.57</td><td>7.29</td>
+          </tr>
+          <tr>
+            <td>CLEAR-SFT</td>
+            <td>69.34</td><td>63.04</td><td>6.30</td>
+          </tr>
+          <tr class="highlight-row">
+            <td><b>CLEAR-RL</b></td>
+            <td><b>70.27</b></td><td><b>64.96</b></td><td><b>5.31</b></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Qualitative Results ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Qualitative Results</h2>
+    <div class="content has-text-justified">
+      <p>
+        CLEAR adaptively decides whether to invoke image restoration based on the severity of degradation.
+        For mildly degraded images, the model answers directly. For heavily degraded images, the model
+        triggers <code>&lt;image_restore&gt;</code> before answering.
+      </p>
+    </div>
+
+    <div class="has-text-centered">
+      <figure>
+        <img src="static/images/qualitative.png"
+             alt="Qualitative results: easy vs hard degradation"
+             style="max-width: 95%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 4.</b> <b>Left:</b> Easy degradation &mdash; the model answers directly without restoration.
+          <b>Right:</b> Hard degradation &mdash; the model triggers restoration before answering correctly.
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="has-text-centered" style="margin-top: 2rem;">
+      <figure>
+        <img src="static/images/additional_qualitative.png"
+             alt="Additional qualitative examples with restoration"
+             style="max-width: 95%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 5.</b> Additional examples showing CLEAR&rsquo;s restoration-assisted reasoning pipeline.
+          The model detects degradation, invokes image restoration, and then answers correctly.
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Adaptive Behavior ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Adaptive Restoration Behavior</h2>
+    <div class="content has-text-justified">
+      <p>
+        As degradation severity increases from Low to High, CLEAR triggers image restoration more frequently,
+        demonstrating the learned adaptive decision-making optimized through the decision reward in Interleaved GRPO.
+      </p>
+    </div>
+    <div class="has-text-centered">
+      <figure>
+        <img src="static/images/adaptive.png"
+             alt="Generation triggering rate across degradation levels"
+             style="max-width: 60%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 6.</b> Generation triggering rate (%) and inference time across six benchmarks at
+          Low, Mid, and High degradation levels.
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======== MMD-Bench ======== -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">MMD-Bench</h2>
+    <div class="content has-text-justified">
+      <p>
+        We introduce <b>MMD-Bench</b> (Multimodal Model Degradation Benchmark), a comprehensive evaluation benchmark
+        covering <b>16 corruption types</b> across 4 categories (Capture, Transmission, Environment, Post-processing)
+        at <b>3 severity levels</b> (Low, Mid, High). MMD-Bench is constructed by applying controlled degradations to
+        6 existing VLM benchmarks.
+      </p>
+    </div>
+    <div class="has-text-centered">
+      <figure>
+        <img src="static/images/corruption_vis.png"
+             alt="16 corruption types at 3 severity levels"
+             style="max-width: 95%;">
+        <figcaption class="is-size-6" style="margin-top: 0.5rem;">
+          <b>Figure 7.</b> Visualization of 16 corruption types at 3 severity levels used in MMD-Bench,
+          organized by category: Capture (blue), Transmission (yellow), Environment (green), Post-processing (red).
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======== BibTeX ======== -->
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title is-3 has-text-centered">BibTeX</h2>
+    <div class="bibtex-box">
+      <button class="copy-btn" onclick="copyBibtex()"><i class="fas fa-copy"></i> Copy</button>
+      <pre><code id="bibtex-text">@article{zhang2026clear,
+  title={CLEAR: Unlocking Generative Potential for Degraded Image Understanding in Unified Multimodal Models},
+  author={Zhang, Zefeng and Hao, Xiangzhao and Tang, Hengzhu and Zhang, Zhenyu and Sheng, Jiawei and Li, Xiaodong and Li, Zhenyang and Gao, Li and Shi, Daiting and Yin, Dawei and others},
+  journal={arXiv preprint arXiv:YOUR_ARXIV_ID},
+  year={2026}
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ======== Footer ======== -->
+<footer class="footer">
+  <div class="container">
+    <div class="content has-text-centered">
+      <p>
+        This page was built using the
+        <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank">
+          Academic Project Page Template</a>.
+        Licensed under
+        <a href="http://creativecommons.org/licenses/by-sa/4.0/" rel="license" target="_blank">CC BY-SA 4.0</a>.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<script>
+function copyBibtex() {
+  const bibtex = document.getElementById('bibtex-text').innerText;
+  navigator.clipboard.writeText(bibtex).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+    setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i> Copy'; }, 2000);
+  });
+}
+</script>
+
+</body>
+</html>
