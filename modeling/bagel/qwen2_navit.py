@@ -1192,7 +1192,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
             )
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
 
-        # # 添加gradient checkpointing标志
+        # # Add gradient checkpointing flag
         self.gradient_checkpointing = config.gradient_checkpointing
 
         # Initialize weights and apply final processing
@@ -1244,12 +1244,12 @@ class Qwen2Model(Qwen2PreTrainedModel):
         #         **extra_inputs,
         #     )
 
-        # 如果启用gradient checkpointing
+        # If gradient checkpointing is enabled
         if self.gradient_checkpointing and self.training:
-            # 定义用于checkpoint的自定义前向函数
+            # Define custom forward function for checkpointing
             def create_custom_forward(module):
                 def custom_forward(*inputs):
-                    # inputs应该包含所有需要的参数
+                    # inputs should contain all required parameters
                     return module(
                         packed_sequence=inputs[0],
                         sample_lens=inputs[1],
@@ -1260,9 +1260,9 @@ class Qwen2Model(Qwen2PreTrainedModel):
 
                 return custom_forward
 
-            # 逐层应用checkpointing
+            # Apply checkpointing layer by layer
             for i, decoder_layer in enumerate(self.layers):
-                # 确保输入需要梯度
+                # Ensure inputs require gradients
                 if packed_sequence.requires_grad:
                     packed_sequence = checkpoint.checkpoint(
                         create_custom_forward(decoder_layer),
@@ -1270,7 +1270,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
                         sample_lens,
                         attention_mask,
                         packed_position_embeddings,
-                        use_reentrant=False,  # 推荐使用非重入模式，更稳定
+                        use_reentrant=False,  # Recommended: non-reentrant mode is more stable
                     )
                 else:
                     packed_sequence = decoder_layer(
@@ -1281,7 +1281,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
                         **extra_inputs,
                     )
         else:
-            # 原有的前向传播逻辑
+            # Original forward pass logic
             for decoder_layer in self.layers:
                 packed_sequence = decoder_layer(
                     packed_sequence=packed_sequence,

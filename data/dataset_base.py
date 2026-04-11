@@ -115,7 +115,7 @@ class PackedDataset(torch.utils.data.IterableDataset):
             dataset_names = dataset_args.pop("dataset_names")
             dataset_args["data_dir_list"] = []
 
-            # 初始化自定义路径变量，防止后续追加时报错
+            # Initialize custom path variables to prevent errors when appending later
             dataset_args["clean_image_dir"] = None
             dataset_args["corrupted_image_dir"] = None
 
@@ -151,7 +151,7 @@ class PackedDataset(torch.utils.data.IterableDataset):
                 if "corrupted_image_dir" in meta_info:
                     dataset_args["corrupted_image_dir"] = meta_info["corrupted_image_dir"]
 
-            # 传递 output_need_vit 参数
+            # Pass the output_need_vit parameter
             dataset_args["output_need_vit"] = self.data_config.output_need_vit
 
             resume_data_status = dataset_args.pop("resume_data_status", True)

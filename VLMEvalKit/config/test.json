@@ -1,9 +1,9 @@
 {
     "model": {
-        "CLEAR_distill_per_token_200": {
+        "CLEAR": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "/root/CLEAR/results/reason_interleave_grpo_20260330_190814_new_KL_per_token/checkpoint-200",
+            "model_param_path": "../results/<YOUR_CHECKPOINT>",
             "reasoning_mode": "interleave",
             "is_thinking": false,
             "is_ema": false,
@@ -22,53 +22,10 @@
         }
     },
     "data": {
-        "MMBench_DEV_EN_V11_LOW_LEVEL_MID": {
+        "R-Bench-Dis": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_MID"
-        },
-        "MMVet_LOW_LEVEL_MID": {
-            "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_MID"
-        },
-        "MMVP_LOW_LEVEL_MID": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_MID"
-        },
-        "CV-Bench-2D_LOW_LEVEL_MID": {
-            "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_MID"
-        },
-        "MMStar_LOW_LEVEL_MID": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_MID"
-        },
-        "RealWorldQA_LOW_LEVEL_MID": {
-            "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_MID"
-        },
-        "MMBench_DEV_EN_V11_LOW_LEVEL_LOW": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN_V11_LOW_LEVEL_LOW"
-        },
-        "MMVet_LOW_LEVEL_LOW": {
-            "class": "MMVet",
-            "dataset": "MMVet_LOW_LEVEL_LOW"
-        },
-        "MMVP_LOW_LEVEL_LOW": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMVP_LOW_LEVEL_LOW"
-        },
-        "CV-Bench-2D_LOW_LEVEL_LOW": {
-            "class": "CVBench",
-            "dataset": "CV-Bench-2D_LOW_LEVEL_LOW"
-        },
-        "MMStar_LOW_LEVEL_LOW": {
-            "class": "ImageMCQDataset",
-            "dataset": "MMStar_LOW_LEVEL_LOW"
-        },
-        "RealWorldQA_LOW_LEVEL_LOW": {
-            "class": "ImageMCQDataset",
-            "dataset": "RealWorldQA_LOW_LEVEL_LOW"
+            "dataset": "R-Bench-Dis"
         }
+
     }
 }

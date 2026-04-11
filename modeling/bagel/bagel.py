@@ -53,7 +53,7 @@ class BagelConfig(PretrainedConfig):
 class Bagel(PreTrainedModel):
     config_class = BagelConfig
     base_model_prefix = "bagel"
-    supports_gradient_checkpointing = True  # ★ 让顶层声明支持 GC
+    supports_gradient_checkpointing = True  # Allow top-level declaration to support GC
 
     def __init__(self, language_model, vit_model, config: BagelConfig):
         super().__init__(config)
@@ -103,12 +103,12 @@ class Bagel(PreTrainedModel):
             nn.init.constant_(self.llm2vae.weight, 0)
             nn.init.constant_(self.llm2vae.bias, 0)
 
-    # ★ 这个方法会被 PreTrainedModel.apply(...) 递归调用到每个子模块
+    # This method is called recursively by PreTrainedModel.apply(...) on each submodule
     def _set_gradient_checkpointing(self, module, value: bool = False):
-        # 你的 Qwen2Model / 各层都有这个 flag，就直接下发
+        # If the Qwen2Model / each layer has this flag, propagate it directly
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
-        # 训练时开 GC 通常要关 cache；生成时 TRL 会临时关/再开
+        # GC is typically enabled during training with cache disabled; TRL will temporarily toggle during generation
         if hasattr(module, "use_cache"):
             module.use_cache = not value
 
@@ -143,12 +143,12 @@ class Bagel(PreTrainedModel):
         dtype = self.language_model.dtype
         
         # -------------------------------------------------------------
-        # [Step 0] 预先构建 Dummy Loss 组件
-        # 确保每个可训练的子模块都在计算图中被“触碰”一次
+        # [Step 0] Pre-build Dummy Loss components
+        # Ensure every trainable submodule is “touched” once in the computation graph
         # -------------------------------------------------------------
         dummy_loss = torch.tensor(0.0, device=device, dtype=dtype)
 
-        # 1. 文本 Embedding
+        # 1. Text Embedding
         packed_text_embedding = self.language_model.model.embed_tokens(packed_text_ids)
         packed_sequence = packed_text_embedding.new_zeros(
             size=(sequence_length, self.hidden_size)
@@ -198,17 +198,17 @@ class Bagel(PreTrainedModel):
                 packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
             else:
                 # [Dummy Pass]
-                # 构造极小输入，避免显存占用，但必须产生计算图
-                # 使用 packed_text_embedding[0:1] 作为输入源，确保连通性
+                # Construct minimal input to avoid memory usage, but must produce a computation graph
+                # Use packed_text_embedding[0:1] as input source to ensure connectivity
                 dummy_in = packed_text_embedding[0:1].detach().new_zeros((1, self.vit_hidden_size))
-                # 必须 enable_grad 确保中间变量追踪
+                # Must enable_grad to ensure intermediate variable tracking
                 dummy_in.requires_grad_(True) 
                 
                 # Connector & PosEmbed
                 d_conn = self.connector(dummy_in)
                 d_pos = self.vit_pos_embed(torch.zeros((1,), device=device, dtype=torch.long))
                 
-                # 累加到 dummy_loss，乘0消除数值影响，但保留梯度链
+                # Accumulate to dummy_loss; multiply by 0 to eliminate numerical impact while preserving gradient chain
                 dummy_loss = dummy_loss + (d_conn.sum() + d_pos.sum()) * 0.0
 
         # 4. Visual Generation Branch (Input Side)
@@ -251,7 +251,7 @@ class Bagel(PreTrainedModel):
                 packed_sequence[packed_vae_token_indexes] = packed_latent
             else:
                 # [Dummy Pass]
-                # 构造输入
+                # Construct input
                 d_lat = torch.zeros((1, self.patch_latent_dim), device=device, dtype=dtype)
                 d_time = torch.zeros((1,), device=device, dtype=dtype)
                 d_idx = torch.zeros((1,), device=device, dtype=torch.long)
@@ -314,15 +314,15 @@ class Bagel(PreTrainedModel):
                 has_mse = packed_timesteps > 0
                 mse_val = (packed_mse_preds - target[has_mse]) ** 2
                 
-                # 将 dummy_loss 挂载到真实的 mse 上，确保所有 dummy 梯度都能回传
+                # Attach dummy_loss to the real mse to ensure all dummy gradients can backpropagate
                 mse = mse_val + dummy_loss 
             else:
                 # [Dummy Pass]
-                # 必须让 LLM2VAE 参与计算
-                # 使用 last_hidden_state 的一部分作为输入，确保连通性
+                # Must include LLM2VAE in computation
+                # Use part of last_hidden_state as input to ensure connectivity
                 d_out = self.llm2vae(last_hidden_state[0:1]) 
                 
-                # 这里的 mse 包含：llm2vae 的 dummy 梯度 + 前面所有 dummy 的梯度
+                # This mse contains: llm2vae's dummy gradient + all previous dummy gradients
                 mse = d_out.sum() * 0.0 + dummy_loss
 
         # 8. CE Loss Calculation
@@ -1403,9 +1403,9 @@ class Bagel(PreTrainedModel):
                 # Record trajectory
                 if record_trajectory:
                     # Gaussian transition: x_next ~ N(mu, variance)
-                    # 使用 .mean() 归一化 log-prob（与训练端一致）：
-                    #   ratio = exp(log_p_new - log_p_old) 只要两端归一化一致就数学正确
-                    #   .mean() 让梯度量级与 text GRPO 的 per-token mean 对齐
+                    # Use .mean() to normalize log-prob (consistent with training side):
+                    #   ratio = exp(log_p_new - log_p_old) is mathematically correct as long as both sides normalize consistently
+                    #   .mean() aligns gradient magnitude with text GRPO's per-token mean
                     mu = x_t - drift * dt
                     variance = sde_sigma ** 2 * dt
 
@@ -1441,7 +1441,7 @@ class Bagel(PreTrainedModel):
 
         # Add generation context to trajectory for log prob recomputation
         if record_trajectory and trajectory:
-            # 只存轻量级的 static params，不存 past_key_values（避免 OOM）
+            # Only store lightweight static params, not past_key_values (to avoid OOM)
             trajectory_context = {
                 'packed_vae_position_ids': packed_vae_position_ids.detach().cpu(),
                 'packed_vae_token_indexes': packed_vae_token_indexes.detach().cpu(),
@@ -1558,9 +1558,9 @@ class Bagel(PreTrainedModel):
         step = 0
         generated_sequence = []
         curr_tokens = packed_start_tokens
-        # 防止温度为 0 导致除零
+        # Prevent division by zero when temperature is 0
         temperature = max(float(temperature), 1e-6)
-        # 规范化 top_p 入参
+        # Normalize top_p input
         top_p = float(top_p)
         if top_p <= 0.0:
             top_p = 1e-8
@@ -1603,29 +1603,29 @@ class Bagel(PreTrainedModel):
             past_key_values = output.past_key_values
             packed_query_sequence = output.packed_query_sequence
             pred_logits = self.language_model.lm_head(packed_query_sequence)
-            # 防止采样溢出
+            # Prevent sampling overflow
             pred_logits = pred_logits[:, :151665]
 
             if do_sample:
                 probs = nn.functional.softmax(pred_logits / temperature, dim=-1)
                 if top_p < 1.0:
-                    # nucleus (top-p) 截断
+                    # Nucleus (top-p) truncation
                     sorted_probs, sorted_indices = torch.sort(
                         probs, dim=-1, descending=True
                     )
                     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-                    # 将累计概率超过 top_p 的条目置零，但保留第一个超过的位置之前的所有条目
+                    # Zero out entries whose cumulative probability exceeds top_p, but keep all entries before the first one that exceeds it
                     mask = cumulative_probs > top_p
-                    # 右移一位，确保至少保留一个 token
+                    # Shift right by one position to ensure at least one token is kept
                     mask[..., 1:] = mask[..., :-1].clone()
                     mask[..., 0] = False
 
                     sorted_probs = sorted_probs.masked_fill(mask, 0.0)
-                    # 重归一化
+                    # Re-normalize
                     sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
 
-                    # 在截断分布上采样，并映射回原索引
+                    # Sample from the truncated distribution and map back to original indices
                     sampled_idx = torch.multinomial(
                         sorted_probs, num_samples=1
                     )  # [B, 1]
@@ -1633,7 +1633,7 @@ class Bagel(PreTrainedModel):
                         -1
                     )  # [B]
                 else:
-                    # 与原逻辑一致：对全词表采样
+                    # Consistent with original logic: sample from full vocabulary
                     curr_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
             else:
                 curr_tokens = torch.argmax(pred_logits, dim=-1)

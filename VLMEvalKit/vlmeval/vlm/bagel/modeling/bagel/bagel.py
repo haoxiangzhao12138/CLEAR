@@ -250,10 +250,10 @@ class Bagel(PreTrainedModel):
         mse = None
         if self.config.visual_gen:
             if len(mse_loss_indexes) == 0:
-                # 构造一个 shape=(1, hidden) 的全 0 向量
+                # Construct a zero vector with shape=(1, hidden)
                 dummy_input = last_hidden_state.new_zeros((1, self.hidden_size))
-                dummy_pred = self.llm2vae(dummy_input)  # 一定会用到 llm2vae 的参数
-                mse = dummy_pred.sum() * 0.0  # 标量 0，梯度也全 0
+                dummy_pred = self.llm2vae(dummy_input)  # This will always use llm2vae's parameters
+                mse = dummy_pred.sum() * 0.0  # Scalar 0, gradient is also all zeros
             else:
                 packed_mse_preds = self.llm2vae(
                     last_hidden_state[mse_loss_indexes]
@@ -1079,27 +1079,27 @@ class Bagel(PreTrainedModel):
         temperature: float = 1.0,
         end_token_id: int = None,
         top_p: float = 1.0,
-        # ===== NEW: 重复惩罚系数（>1 惩罚，0~1 奖励，=1 关闭） =====
+        # ===== NEW: Repetition penalty coefficient (>1 penalizes, 0~1 rewards, =1 disabled) =====
         repetition_penalty: float = 1.0,
-        # ===== 可选：用提示词/上下文 seeds 填充已见集合（形状 [B, L] 或 [L]）=====
+        # ===== Optional: Populate seen set with prompt/context seed tokens (shape [B, L] or [L]) =====
         prompt_token_ids: torch.LongTensor | None = None,
     ):
         step = 0
         generated_sequence = []
         curr_tokens = packed_start_tokens
-        # 防止温度为 0 导致除零
+        # Prevent division by zero when temperature is 0
         temperature = max(float(temperature), 1e-6)
-        # 规范化 top_p 入参
+        # Normalize top_p input
         top_p = float(top_p)
         if top_p <= 0.0:
             top_p = 1e-8
         elif top_p > 1.0:
             top_p = 1.0
 
-        # ===== NEW: 已出现 token 掩码，延迟初始化到知道 vocab 大小时 =====
+        # ===== NEW: Seen token mask, lazily initialized when vocab size is known =====
         seen_mask: torch.Tensor | None = None
-        # 如果你有提示词 token，可在首步初始化时并入
-        seed_prompt_ids = prompt_token_ids  # 可能是 [B, L] 或 [L] 或 None
+        # If prompt tokens are available, they can be incorporated during first-step initialization
+        seed_prompt_ids = prompt_token_ids  # May be [B, L] or [L] or None
 
         while step < max_length:
             generated_sequence.append(curr_tokens)
@@ -1134,20 +1134,20 @@ class Bagel(PreTrainedModel):
             past_key_values = output.past_key_values
             packed_query_sequence = output.packed_query_sequence
             pred_logits = self.language_model.lm_head(packed_query_sequence)
-            # 防止采样溢出
+            # Prevent sampling overflow
             pred_logits = pred_logits[:, :151665]  # [B, V]
             B, V = pred_logits.shape
 
-            # ===== NEW: 构建/更新已见 token 掩码（presence 语义）=====
+            # ===== NEW: Build/update seen token mask (presence semantics) =====
             if abs(float(repetition_penalty) - 1.0) > 1e-6:
-                # 延迟初始化 seen_mask
+                # Lazily initialize seen_mask
                 if (seen_mask is None) or (seen_mask.shape[0] != B) or (seen_mask.shape[1] != V):
                     seen_mask = torch.zeros((B, V), dtype=torch.bool, device=pred_logits.device)
 
-                    # 可选：把提示词 token 并入（如果提供了且希望“把 prompt 也算作已见”）
+                    # Optional: Include prompt tokens (if provided and you want to count prompt as “already seen”)
                     if seed_prompt_ids is not None:
                         if seed_prompt_ids.dim() == 1:
-                            # 广播到每个 batch
+                            # Broadcast to each batch
                             ids = seed_prompt_ids.to(pred_logits.device)
                             ids = ids[(ids >= 0) & (ids < V)]
                             if ids.numel() > 0:
@@ -1158,40 +1158,40 @@ class Bagel(PreTrainedModel):
                             rows = torch.arange(ids.size(0), device=ids.device).unsqueeze(1).expand_as(ids)
                             seen_mask[rows, ids] = True
 
-                # 把“本步输入 token”（上一时刻的输出）标为已见
+                # Mark “current step input tokens” (previous step's output) as seen
                 valid = (curr_tokens >= 0) & (curr_tokens < V)
                 if valid.any():
                     rows = torch.nonzero(valid, as_tuple=False).squeeze(-1)
                     seen_mask[rows, curr_tokens[rows]] = True
 
-                # ===== NEW: 应用重复惩罚（符号保留缩放；只改 seen 的列）=====
+                # ===== NEW: Apply repetition penalty (sign-preserving scaling; only modify seen columns) =====
                 penalty_scores = torch.where(
                     pred_logits < 0, pred_logits * repetition_penalty, pred_logits / repetition_penalty
                 )
                 pred_logits = torch.where(seen_mask, penalty_scores, pred_logits)
 
-            # ===== 之后流程保持不变：温度 / top-p / 采样或贪心 =====
+            # ===== Remaining flow unchanged: temperature / top-p / sampling or greedy =====
             if do_sample:
                 probs = nn.functional.softmax(pred_logits / temperature, dim=-1)
                 if top_p < 1.0:
-                    # nucleus (top-p) 截断
+                    # Nucleus (top-p) truncation
                     sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
                     cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-                    # 将累计概率超过 top_p 的条目置零，但保留第一个超过的位置之前的所有条目
+                    # Zero out entries whose cumulative probability exceeds top_p, but keep all entries before the first one that exceeds it
                     mask = cumulative_probs > top_p
                     mask[..., 1:] = mask[..., :-1].clone()
                     mask[..., 0] = False
 
                     sorted_probs = sorted_probs.masked_fill(mask, 0.0)
-                    # 重归一化
+                    # Re-normalize
                     sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
 
-                    # 在截断分布上采样，并映射回原索引
+                    # Sample from the truncated distribution and map back to original indices
                     sampled_idx = torch.multinomial(sorted_probs, num_samples=1)  # [B, 1]
                     curr_tokens = torch.gather(sorted_indices, -1, sampled_idx).squeeze(-1)  # [B]
                 else:
-                    # 与原逻辑一致：对全词表采样
+                    # Consistent with original logic: sample from full vocabulary
                     curr_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
             else:
                 curr_tokens = torch.argmax(pred_logits, dim=-1)

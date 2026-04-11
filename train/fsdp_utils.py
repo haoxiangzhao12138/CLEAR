@@ -102,7 +102,7 @@ def fsdp_wrapper(original_model, fsdp_config, ignored_modules=[]):
 
 def _to_bf16(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     """
-    仅把浮点张量转换为 bfloat16；其余 dtype（int/bool 等）保持不变。
+    Convert floating-point tensors to bfloat16; leave other dtypes (int/bool etc.) unchanged.
     """
     return {
         name: (
@@ -115,7 +115,7 @@ def _to_bf16(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
 
 
 def _get_cfg_attr(cfg, key, default=None):
-    # 兼容 Namespace / dataclass / dict
+    # Compatible with Namespace / dataclass / dict
     if isinstance(cfg, dict):
         return cfg.get(key, default)
     return getattr(cfg, key, default)
@@ -167,46 +167,6 @@ class FSDPCheckpoint:
             del model_state_dict
             torch.cuda.empty_cache()
 
-        # with FSDP.state_dict_type(
-        #     model,
-        #     StateDictType.FULL_STATE_DICT,
-        #     FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
-        # ):
-        #     model_state_dict = _to_bf16(model.state_dict())
-        #     if dist.get_rank() == 0:
-        #         save_file(
-        #             model_state_dict, os.path.join(save_path, "model.safetensors")
-        #         )
-        #     del model_state_dict
-        #     torch.cuda.empty_cache()
-
-        # with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT):
-        #     if fsdp_config.sharding_strategy == "FULL_SHARD":
-        #         shard_index = dist.get_rank()
-        #         total_shards = dist.get_world_size()
-        #     elif fsdp_config.sharding_strategy == "HYBRID_SHARD":
-        #         shard_index = dist.get_rank() % fsdp_config.num_shard
-        #         total_shards = fsdp_config.num_shard
-        #     else:
-        #         raise NotImplementedError
-
-        #     optimizer_save_path = os.path.join(
-        #         save_path, f"optimizer.{shard_index:05d}-of-{total_shards:05d}.pt"
-        #     )
-        #     if fsdp_config.sharding_strategy == "FULL_SHARD":
-        #         torch.save(optimizer.state_dict(), optimizer_save_path)
-        #     elif fsdp_config.sharding_strategy == "HYBRID_SHARD":
-        #         if dist.get_rank() < fsdp_config.num_shard:
-        #             torch.save(optimizer.state_dict(), optimizer_save_path)
-        #     else:
-        #         raise NotImplementedError
-
-        # if dist.get_rank() == 0 and scheduler is not None:
-        #     torch.save(scheduler.state_dict(), os.path.join(save_path, "scheduler.pt"))
-
-        # if dist.get_rank() == 0 and data_status is not None:
-        #     torch.save(data_status, os.path.join(save_path, "data_status.pt"))
-
         dist.barrier()
         return
 
@@ -229,50 +189,51 @@ class FSDPCheckpoint:
         shards_dir = os.path.join(save_path, "_shards")
         if rank == 0:
             os.makedirs(save_path, exist_ok=True)
-            logger.info(f"Saving checkpoint (sharded→CPU聚合) to {save_path}.")
+            logger.info(f"Saving checkpoint (sharded -> CPU aggregation) to {save_path}.")
 
-        # -------- 1) 分片保存（显存最低，不做 FULL 聚合） --------
+        # -------- 1) Sharded save (minimal VRAM, no FULL aggregation) --------
         dist.barrier()
 
-        # 建议在调用本函数前外层已 eval()/no_grad() + zero_grad()
+        # Recommend calling eval()/no_grad() + zero_grad() before this function
         cfg = ShardedStateDictConfig(offload_to_cpu=True)
 
-        # 模型分片
+        # Model shards
         with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT, cfg):
             model_sd_sharded = model.state_dict()
         payload = {"model": model_sd_sharded}
 
-        # EMA 分片（如有）
+        # EMA shards (if available)
         if ema_model is not None:
             with FSDP.state_dict_type(ema_model, StateDictType.SHARDED_STATE_DICT, cfg):
                 ema_sd_sharded = ema_model.state_dict()
             payload["ema"] = ema_sd_sharded
 
-        # 写分片到本步目录下的 _shards/
+        # Write shards to _shards/ under this step's directory
         save(payload, storage_writer=FileSystemWriter(shards_dir))
         dist.barrier()
 
-        # -------- 2) 仅 rank0：在 CPU 聚合为完整权重并写成 safetensors --------
+        # -------- 2) Rank 0 only: aggregate to full weights on CPU and write safetensors --------
         if rank == 0:
             agg_t0 = time.time()
             reader = FileSystemReader(shards_dir)
 
-            # 从 fsdp_config 获取 CPU 模型构造函数
+            # Get CPU model constructor from fsdp_config
             cpu_model_ctor = _get_cfg_attr(fsdp_config, "cpu_model_ctor", None)
             if cpu_model_ctor is None or not callable(cpu_model_ctor):
                 raise RuntimeError(
-                    "fsdp_config.cpu_model_ctor 未提供或不可调用：需要一个返回未包FSDP且同架构模型的构造函数。"
+                    "fsdp_config.cpu_model_ctor not provided or not callable: "
+                    "requires a constructor returning an unwrapped model with same architecture."
                 )
 
-            # 2a) 模型：在 CPU 聚合
+            # 2a) Model: aggregate on CPU
             cpu_model = cpu_model_ctor().cpu()
             cpu_model.eval()
-            tgt = {"model": cpu_model.state_dict()}  # 目标容器：完整 state_dict（CPU）
-            load(tgt, storage_reader=reader)  # DCP 负责把分片重组成完整权重
+            tgt = {"model": cpu_model.state_dict()}  # Target container: full state_dict (CPU)
+            load(tgt, storage_reader=reader)  # DCP reassembles shards into full weights
             full_model_sd = _to_bf16(tgt["model"])
             save_file(full_model_sd, os.path.join(save_path, "model.safetensors"))
 
-            # 2b) EMA：如存在，则同样聚合
+            # 2b) EMA: aggregate similarly if exists
             if "ema" in payload:
                 cpu_ema_ctor = _get_cfg_attr(
                     fsdp_config, "cpu_ema_model_ctor", cpu_model_ctor
@@ -280,7 +241,7 @@ class FSDPCheckpoint:
                 cpu_ema = cpu_ema_ctor().cpu()
                 cpu_ema.eval()
                 tgt_ema = {"ema": cpu_ema.state_dict()}
-                # 若不存在ema分片，load_state_dict会抛错；做一次保护
+                # If EMA shards don't exist, load_state_dict will raise; add guard
                 try:
                     load(tgt_ema, storage_reader=reader)
                     full_ema_sd = _to_bf16(tgt_ema["ema"])
@@ -288,19 +249,19 @@ class FSDPCheckpoint:
                 except Exception as e:
                     logger.warning(f"EMA aggregation skipped or partial: {e}")
 
-            # 2c) 删除分片文件夹
+            # 2c) Remove shard files
             try:
                 shutil.rmtree(shards_dir)
             except Exception as e:
                 logger.warning(f"Failed to remove shards dir {shards_dir}: {e}")
 
             logger.info(
-                f"[aggregate] CPU合并并写safetensors耗时: {time.time() - agg_t0:.3f}s"
+                f"[aggregate] CPU merge and safetensors write took: {time.time() - agg_t0:.3f}s"
             )
 
         dist.barrier()
-        # 到这里，save_path 下只剩下 model.safetensors / ema.safetensors（如有）
-        # 外层已有总耗时打印的话，这里不重复打印
+        # At this point, save_path only contains model.safetensors / ema.safetensors (if any)
+        # Outer caller handles total time printing
         return
 
     @staticmethod

@@ -16,7 +16,7 @@ from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE
 
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
-    img.save(buf, format=fmt)  # 把图像写入内存缓冲区
+    img.save(buf, format=fmt)  # Write image to memory buffer
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return b64
 
@@ -290,13 +290,14 @@ class InterleaveInferencer:
             }
 
         # RL training mode: single SDE pass for both image generation AND trajectory recording
-        # 训练时用 SDE 统一生成和轨迹记录，确保 reward 和训练分布一致：
-        #   - SDE 生成的图像通过 Bridge 注入 context → 模型推理 → reward
-        #   - 同一条 SDE 轨迹用于 Flow-GRPO 训练
-        #   - 评测时（sde_sigma=0）走下面的 else 分支，用 ODE 生成高质量图像
+        # During training, SDE unifies generation and trajectory recording to ensure
+        # reward and training distribution consistency:
+        #   - SDE-generated images are injected into context via Bridge -> model inference -> reward
+        #   - The same SDE trajectory is used for Flow-GRPO training
+        #   - During evaluation (sde_sigma=0), the else branch below uses ODE for high-quality images
         if record_trajectory and sde_sigma > 0:
             # SDE generation with trajectory recording
-            # 无 CFG（SDE 模式下 cfg 已在上方设为 1.0）
+            # No CFG (in SDE mode, cfg scales are set to 1.0 above)
             unpacked_latent, unpacked_latent_llm, trajectory = self.model.generate_image_with_trajectory(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=cfg_text_past_key_values,
@@ -633,8 +634,8 @@ class InterleaveInferencer:
         cfg_renorm_type="global",
         image_shapes=(1024, 1024),
         top_p=1.0,
-        output_need_vae=False,  # 控制生成图片后是否将 VAE token 插入上下文
-        output_need_vit=True,   # 控制生成图片后是否将 ViT token 插入上下文
+        output_need_vae=False,  # Whether to insert VAE tokens into context after image generation
+        output_need_vit=True,   # Whether to insert ViT tokens into context after image generation
         consider_think=True,
         sde_sigma=0.0,
         record_trajectory=False,
@@ -642,7 +643,7 @@ class InterleaveInferencer:
         **kwargs,
     ) -> Tuple[List[Union[str, Image.Image]], List[Dict]]:
         """
-        Cooperative reasoning and perception generation function.
+        Interleaved reasoning for CLEAR.
         The input_list should have the input image and the text prompt.
         It can generate the interleaved multimodal chain-of-thought by the model,
         but the image generation is decided by the model itself.
@@ -668,7 +669,7 @@ class InterleaveInferencer:
             answer_pattern = r"<answer>(.*?)</answer>"
             restore_pattern = r"<image_restore>"
 
-            # 处理初始输入列表
+            # Process initial input list
             for input_term in input_lists:
                 if isinstance(input_term, str):
                     cfg_text_context = deepcopy(gen_context)
@@ -691,7 +692,7 @@ class InterleaveInferencer:
             inter_num = 0
             while True:
                 inter_num += 1
-                # 1. 生成推理文本
+                # 1. Generate reasoning text
                 gen_text = self.gen_text(
                     gen_context,
                     do_sample=do_sample,
@@ -701,7 +702,7 @@ class InterleaveInferencer:
                 )
                 output_list.append(gen_text)
                 
-                # 检查是否达成最终答案
+                # Check if final answer is reached
                 answer_match = re.search(answer_pattern, gen_text, re.DOTALL)
                 if answer_match:
                     return output_list, trajectories
@@ -709,11 +710,11 @@ class InterleaveInferencer:
                 if inter_num >= max_inter_num:
                     break
 
-                # 2. 检查是否需要调用图像恢复工具
+                # 2. Check if image restoration tool needs to be invoked
                 restore_match = re.search(restore_pattern, gen_text)
 
                 if restore_match:
-                    # 准备生图的 CFG 上下文
+                    # Prepare CFG context for image generation
                     cfg_text_context = deepcopy(gen_context)
 
                     if not consider_think:
@@ -727,7 +728,7 @@ class InterleaveInferencer:
                         gen_text, edit_cfg_img_context
                     )
 
-                    # 3. 调用图像生成（恢复）工具
+                    # 3. Invoke image generation (restoration) tool
                     img, trajectory, raw_latent, packed_latent = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
@@ -745,8 +746,8 @@ class InterleaveInferencer:
                         num_timesteps_sde=num_timesteps_sde,
                     )
 
-                    # 4. 反馈结果
-                    # 先使用 packed_latent 更新上下文（避免 decode+encode），再保存到 output_list
+                    # 4. Feed results back
+                    # First update context using packed_latent (avoids decode+encode), then save to output_list
                     if output_need_vae or output_need_vit:
                         # Use packed_latent (LLM format) directly for VAE context update (skip decode+encode)
                         if output_need_vae:
@@ -771,7 +772,7 @@ class InterleaveInferencer:
                                 img_processed, edit_cfg_img_context, vae=False, vit=True
                             )
 
-                    # 保存 raw latent（用于 latent_quality_reward），在 Image 之前
+                    # Save raw latent (for latent_quality_reward), before Image
                     output_list.append({
                         "type": "generated_latent",
                         "latent": raw_latent.detach().cpu(),

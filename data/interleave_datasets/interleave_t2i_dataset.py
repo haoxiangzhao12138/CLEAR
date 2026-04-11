@@ -276,15 +276,15 @@ class JSONLStandardIterableDataset(DistributedIterableDataset):
     ):
         """
         Args:
-            dataset_name: 数据集名称，用于标识
-            jsonl_path_list: JSONL 文件路径列表
-            num_used_data: 每个 JSONL 文件中使用的数据行数
-            local_rank: 当前进程的 local_rank
-            world_size: 总进程数（world_size）
-            num_workers: DataLoader 的 worker 数量
-            data_status: 用于恢复训练时记录当前读取进度
-            shuffle_lines: 是否对 JSONL 文件中的数据行进行打乱
-            shuffle_seed: 打乱数据行时使用的随机种子
+            dataset_name: Dataset name for identification
+            jsonl_path_list: List of JSONL file paths
+            num_used_data: Number of data rows used from each JSONL file
+            local_rank: Local rank of the current process
+            world_size: Total number of processes (world_size)
+            num_workers: Number of DataLoader workers
+            data_status: Records the current reading progress for resuming training
+            shuffle_lines: Whether to shuffle data rows in the JSONL files
+            shuffle_seed: Random seed used when shuffling data rows
         """
         super().__init__(dataset_name, local_rank, world_size, num_workers)
 
@@ -297,7 +297,7 @@ class JSONLStandardIterableDataset(DistributedIterableDataset):
         self.tokenizer = tokenizer
         self.transform = transform
 
-        # 初始化数据路径
+        # Initialize data paths
         self.data_paths = self.get_data_paths(
             jsonl_path_list=jsonl_path_list,
             data_dir_list=data_dir_list,
@@ -306,7 +306,7 @@ class JSONLStandardIterableDataset(DistributedIterableDataset):
             shuffle_seed=shuffle_seed,
         )
 
-        # 设置 epoch，用于打乱整个数据路径
+        # Set epoch, used for shuffling the entire data paths
         self.set_epoch()
 
     def get_data_paths(
@@ -318,7 +318,7 @@ class JSONLStandardIterableDataset(DistributedIterableDataset):
         shuffle_seed,
     ):
         """
-        构建数据路径：(file_path, line_index)
+        Build data paths: (file_path, line_index)
         """
         data_paths = []
 
@@ -341,7 +341,7 @@ class JSONLStandardIterableDataset(DistributedIterableDataset):
 
     def parse_row(self, image_dir, row):
         """
-        子类需实现此方法，用于解析每行 JSON 数据
+        Subclasses must implement this method to parse each JSON data row.
         """
         raise NotImplementedError
 

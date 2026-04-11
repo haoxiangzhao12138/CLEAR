@@ -1,7 +1,6 @@
-export NCCL_DEBUG=INFO  # 开启PyTorch分布式调试日志
-export NCCL_TIMEOUT=3600000  # 超时时间设为30分钟（根据需要调整）
+export NCCL_TIMEOUT=3600000  # Timeout in ms (adjust as needed)
 
-# 取当前日期＋小时，例如 20250613_14
+# Timestamp for experiment ID
 experiment="clear_sft_drop_vit"
 ts=$(date +"%Y%m%d_%H%M%S")
 run_id="${ts}_${experiment}"

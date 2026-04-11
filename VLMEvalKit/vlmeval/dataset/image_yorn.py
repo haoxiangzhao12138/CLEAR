@@ -10,9 +10,9 @@ class ImageYORNDataset(ImageBaseDataset):
 
     DATASET_URL = {
         'MME': 'https://opencompass.openxlab.space/utils/VLMEval/MME.tsv',
-        'MME_LOW_LEVEL_HIGH': "/root/LMUData/MME_LOW_LEVEL_HIGH.tsv",
-        'MME_LOW_LEVEL_MID': '/root/LMUData/MME_LOW_LEVEL_MID.tsv',
-        'MME_LOW_LEVEL_LOW': '/root/LMUData/MME_LOW_LEVEL_LOW.tsv',
+        'MME_LOW_LEVEL_HIGH': "./LMUData/MME_LOW_LEVEL_HIGH.tsv",
+        'MME_LOW_LEVEL_MID': './LMUData/MME_LOW_LEVEL_MID.tsv',
+        'MME_LOW_LEVEL_LOW': './LMUData/MME_LOW_LEVEL_LOW.tsv',
         'HallusionBench': 'https://opencompass.openxlab.space/utils/VLMEval/HallusionBench.tsv',
         'POPE': 'https://opencompass.openxlab.space/utils/VLMEval/POPE.tsv',
         'AMBER': 'https://huggingface.co/datasets/yifanzhang114/AMBER_base64/resolve/main/AMBER.tsv',

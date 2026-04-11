@@ -20,7 +20,7 @@ from prompts import VLM_THINK_SYSTEM_PROMPT, GEN_THINK_SYSTEM_PROMPT, INTERLEAVE
 
 def pil_to_base64(img: Image.Image, fmt: str = "PNG") -> str:
     buf = io.BytesIO()
-    img.save(buf, format=fmt)  # 把图像写入内存缓冲区
+    img.save(buf, format=fmt)  # Write image to memory buffer
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return b64
 
@@ -396,7 +396,7 @@ class InterleaveInferencer:
         input_lists: List[Union[str, Image.Image]],
         think=False,
         understanding_output=False,
-        max_think_token_n=1000,
+        max_think_token_n=8192,
         do_sample=False,
         text_temperature=0.3,
         cfg_text_scale=3.0,
@@ -573,7 +573,7 @@ class InterleaveInferencer:
         self,
         input_lists: List[Union[str, Image.Image]],
         max_inter_num=3,
-        max_think_token_n=2048,
+        max_think_token_n=8192,
         do_sample=False,
         text_temperature=0.3,
         cfg_text_scale=4.0,
@@ -585,13 +585,13 @@ class InterleaveInferencer:
         cfg_renorm_type="global",
         image_shapes=(1024, 1024),
         top_p=1.0,
-        output_need_vae=False,  # 控制生成图片后是否将 VAE token 插入上下文
-        output_need_vit=True,   # 控制生成图片后是否将 ViT token 插入上下文
+        output_need_vae=False,  # Whether to insert VAE tokens into context after image generation
+        output_need_vit=True,   # Whether to insert ViT tokens into context after image generation
         consider_think=True,
         **kwargs,
     ) -> List[Union[str, Image.Image]]:
-        # cooperative reasoning and perception generation function
-        # the input_list shuould have the input image and the text prompt
+        # Interleaved reasoning for CLEAR
+        # the input_list should have the input image and the text prompt
         # it can generate the interleaved multimodal chain-of-thought by the model
         # but the image generation is decided by the model itself
 
@@ -613,7 +613,7 @@ class InterleaveInferencer:
 
             answer_pattern = r"<answer>(.*?)</answer>"
             restore_pattern = RESTORE_TOKEN
-            # 处理初始输入列表
+            # Process initial input list
             for input_term in input_lists:
                 if isinstance(input_term, str):
                     cfg_text_context = deepcopy(gen_context)
@@ -636,7 +636,7 @@ class InterleaveInferencer:
             inter_num = 0
             while True:
                 inter_num += 1
-                # 1. 生成推理文本
+                # 1. Generate reasoning text
                 gen_text = self.gen_text(
                     gen_context,
                     do_sample=do_sample,
@@ -646,7 +646,7 @@ class InterleaveInferencer:
                 )
                 output_list.append(gen_text)
                 
-                # 检查是否达成最终答案
+                # Check if final answer is reached
                 answer_match = re.search(answer_pattern, gen_text, re.DOTALL)
                 if answer_match:
                     return output_list
@@ -654,11 +654,11 @@ class InterleaveInferencer:
                 if inter_num >= max_inter_num:
                     break
 
-                # 2. 检查是否需要调用图像恢复工具
+                # 2. Check if image restoration tool needs to be invoked
                 restore_match = re.search(restore_pattern, gen_text)
 
                 if restore_match:
-                    # 准备生图的 CFG 上下文
+                    # Prepare CFG context for image generation
                     cfg_text_context = deepcopy(gen_context)
 
                     if not consider_think:
@@ -672,7 +672,7 @@ class InterleaveInferencer:
                         gen_text, edit_cfg_img_context
                     )
                     
-                    # 3. 调用图像生成（恢复）工具
+                    # 3. Invoke image generation (restoration) tool
                     img, packed_latent = self.gen_image(
                         image_shapes,
                         gen_context=gen_context,
@@ -687,12 +687,10 @@ class InterleaveInferencer:
                         cfg_renorm_type=cfg_renorm_type,
                     )
 
-                    # 4. 反馈结果
-                    output_list.append(pil_img2rgb(img))
-
-                    # 根据开关决定是否将生成的图片喂回模型 KV Cache
+                    # 4. Feed results back
+                    # Decide whether to insert generated image back into model KV cache based on switches
                     if output_need_vae or output_need_vit:
-                        # VAE: 直接用 packed_latent 插入上下文（跳过 decode+encode round-trip）
+                        # VAE: Use packed_latent to directly insert into context (skip decode+encode round-trip)
                         if output_need_vae:
                             gen_context = self.update_context_vae_from_packed_latent(
                                 packed_latent=packed_latent,
@@ -702,7 +700,7 @@ class InterleaveInferencer:
                             cfg_text_context = deepcopy(gen_context)
                             edit_cfg_img_context = deepcopy(gen_context)
 
-                        # ViT: 仍需从像素图编码
+                        # ViT: Still needs pixel-level image encoding
                         if output_need_vit:
                             img_processed = self.vae_transform.resize_transform(pil_img2rgb(img))
                             gen_context = self.update_context_image(

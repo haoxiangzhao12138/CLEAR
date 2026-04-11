@@ -8,7 +8,7 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
-# ================= 配置区域 (难度已调整) =================
+# ================= Configuration (difficulty adjusted) =================
 
 DEGRADATION_CONFIG = {
     'capture': {
@@ -37,7 +37,7 @@ DEGRADATION_CONFIG = {
     }
 }
 
-# 预先计算好概率分布
+# Pre-compute probability distribution
 ALL_METHODS = []
 for category, methods in DEGRADATION_CONFIG.items():
     for method_name, details in methods.items():
@@ -48,7 +48,7 @@ WEIGHTS = [item[1] for item in ALL_METHODS]
 TOTAL_WEIGHT = sum(WEIGHTS)
 PROBABILITIES = [w / TOTAL_WEIGHT for w in WEIGHTS]
 
-# 进程数设置
+# Number of worker processes
 NUM_WORKERS = max(1, cpu_count() - 2)
 
 # ===========================================
@@ -60,9 +60,9 @@ def apply_degradation_Benchmark(image, method_name, intensity):
 
 def process_single_image(filename, folder_path, output_dir):
     """
-    1. 基于新权重随机选方法 (Hard方法概率更高)
-    2. 按 2:3:5 比例选择强度 [0.23, 0.45, 0.9]
-    3. 保存
+    1. Randomly select a method based on new weights (hard methods have higher probability)
+    2. Select intensity in a 2:3:5 ratio [0.23, 0.45, 0.9]
+    3. Save
     """
     np.random.seed()
     random.seed()
@@ -74,19 +74,19 @@ def process_single_image(filename, folder_path, output_dir):
         if image is None:
             return False, f"Could not read image: {filename}"
 
-        # 1. 随机选择一种退化方法
+        # 1. Randomly select a degradation method
         selected_method_name = np.random.choice(METHOD_NAMES, p=PROBABILITIES)
 
-        # 2. 按比例选择强度 (难:中:易 = 5:3:2)
+        # 2. Select intensity by ratio (hard:medium:easy = 5:3:2)
         intensity_options = [0.23, 0.45, 0.9]
         intensity_probs   = [0.2,  0.3,  0.5]
         
         intensity = np.random.choice(intensity_options, p=intensity_probs)
 
-        # 3. 应用退化
+        # 3. Apply degradation
         degraded_img = apply_degradation_Benchmark(image, selected_method_name, intensity)
         
-        # 4. 保存
+        # 4. Save
         save_path = os.path.join(output_dir, filename)
         cv2.imwrite(save_path, degraded_img)
         
@@ -97,11 +97,11 @@ def process_single_image(filename, folder_path, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Image degradation pipeline - Hard Mode')
-    parser.add_argument('--input_dir', type=str, 
-                       default="/root/CLEAR/datasets/processed_dataset/rl/images",
+    parser.add_argument('--input_dir', type=str,
+                       default="./datasets/processed_dataset/rl/images",
                        help='Input image directory path')
     parser.add_argument('--output_dir', type=str,
-                       default="/root/CLEAR/datasets/processed_dataset/rl/corruption_images",
+                       default="./datasets/processed_dataset/rl/corruption_images",
                        help='Output directory')
     
     args = parser.parse_args()
@@ -114,14 +114,14 @@ def main():
 
     os.makedirs(output_dir, exist_ok=True)
 
-    print("正在扫描并筛选图片文件...")
+    print("Scanning and filtering image files...")
     valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
     all_files = os.listdir(folder_path)
     image_files = [f for f in all_files if f.lower().endswith(valid_extensions)]
     
     total_files = len(image_files)
-    print(f"共找到 {total_files} 张图片，输出目录: {output_dir}")
-    print(f"策略: 高难度退化权重增加 + 强度偏向 0.9 (50%)")
+    print(f"Found {total_files} images in total, output directory: {output_dir}")
+    print(f"Strategy: increased weight for hard degradations + intensity biased toward 0.9 (50%)")
     
     process_func = partial(
         process_single_image, 

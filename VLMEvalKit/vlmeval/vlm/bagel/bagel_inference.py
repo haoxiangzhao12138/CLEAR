@@ -24,6 +24,7 @@ from .modeling.bagel import (
 from .modeling.qwen2 import Qwen2Tokenizer
 from .modeling.autoencoder import load_ae
 from .inferencer import InterleaveInferencer
+from .visualize import visualize_inference
 from datetime import datetime
 import random
 import string
@@ -32,12 +33,12 @@ import re
 
 def ensure_image_rgb(image: str) -> Image.Image:
     """
-    检查图像输入是否合法，并返回 RGB 格式的 PIL 图像对象。
-    支持：
+    Validate image input and return an RGB PIL Image object.
+    Supports:
       - http(s):// URLs
-      - file:// 路径
-      - 本地路径
-      - data:image;base64, 图像数据
+      - file:// paths
+      - local file paths
+      - data:image;base64, encoded data
     """
     if image.startswith("http://") or image.startswith("https://"):
         response = requests.get(image)
@@ -64,40 +65,40 @@ def ensure_image_rgb(image: str) -> Image.Image:
 
 def process_lists(input_list, output_list, target_dir):
     """
-    将输入列表和输出列表合并为字典，处理其中的图像并保存为JSON文件
+    Merge input and output lists into a dict, process images and save as JSON.
 
-    参数:
-        input_list: 包含字符串和PIL Image对象的列表
-        output_list: 包含字符串和PIL Image对象的列表
-        target_dir: 目标目录，用于创建新文件夹和保存文件
+    Args:
+        input_list: List containing strings and PIL Image objects
+        output_list: List containing strings and PIL Image objects
+        target_dir: Target directory for creating new folder and saving files
     """
 
-    # 合并为字典
+    # Merge into a dictionary
     data_dict = {"input_list": input_list, "output_list": output_list}
 
-    # 生成不重复的文件夹名称 (时间戳 + 随机字符串)
+    # Generate a unique folder name (timestamp + random string)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     random_str = "".join(random.choices(string.ascii_letters + string.digits, k=6))
     folder_name = f"processed_data_{timestamp}_{random_str}"
     folder_path = os.path.join(target_dir, folder_name)
 
-    # 创建文件夹
+    # Create the folder
     os.makedirs(folder_path, exist_ok=True)
 
-    # 处理字典中的图像，保存并替换为路径
+    # Process images in the dictionary: save and replace with file paths
     image_counter = 1
 
     for key in data_dict.keys():
         for i in range(len(data_dict[key])):
             if isinstance(data_dict[key][i], Image.Image):
-                # 保存图像
+                # Save image
                 img_filename = f"{key}_image_{image_counter}.png"
                 img_path = os.path.join(folder_path, img_filename)
                 data_dict[key][i].save(img_path)
                 data_dict[key][i] = img_path
                 image_counter += 1
 
-    # 保存字典为JSON文件
+    # Save dictionary as JSON file
     json_filename = "data_dict.json"
     json_path = os.path.join(folder_path, json_filename)
 
@@ -115,7 +116,7 @@ class BagelInference(BaseModel):
         reasoning_mode: str,  # text, image, interleave
         is_thinking: bool = True,
         max_inter_num=3,
-        max_think_token_n: int = 4096,
+        max_think_token_n: int = 8192,
         max_new_tokns: int = 1024,
         is_ema: bool = False,  # the model save type, if sft, then use ema model, if rl, then use not ema model
         visual_gen: bool = True,
@@ -130,13 +131,14 @@ class BagelInference(BaseModel):
         cfg_renorm_min=0.0,
         cfg_renorm_type="text_channel",
         repetition_penalty: float = 1.0,
-        output_need_vae: bool = False,  # 控制生成图片后是否将 VAE token 插入上下文
-        output_need_vit: bool = True,   # 控制生成图片后是否将 ViT token 插入上下文
+        output_need_vae: bool = False,  # Whether to insert VAE tokens into context after image generation
+        output_need_vit: bool = True,   # Whether to insert ViT tokens into context after image generation
         consider_think: bool = True,
         verbose=False,
-        verbose_print: bool = False,  # 控制是否打印模型输出
-        enable_image_gen_stats: bool = False,  # 控制是否启用图片生成统计
+        verbose_print: bool = False,  # Whether to print model output
+        enable_image_gen_stats: bool = False,  # Whether to enable image generation statistics
         save_file=None,  # if None, then no save the reasoning process
+        vis_dir=None,    # if set, save per-sample visualization (original imgs, generated imgs, html summary)
     ):
         super().__init__()
         self.verbose = verbose
@@ -149,6 +151,12 @@ class BagelInference(BaseModel):
         assert self.reasoning_mode in ["text", "image", "interleave"]
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         self.device = f"cuda:{local_rank}"
+        self.vis_counter = 0
+        if vis_dir is not None:
+            self.vis_dir = os.path.join(vis_dir, f"rank_{local_rank}")
+            os.makedirs(self.vis_dir, exist_ok=True)
+        else:
+            self.vis_dir = None
         self.save_file = save_file
 
         llm_config = Qwen2Config.from_json_file(
@@ -166,8 +174,8 @@ class BagelInference(BaseModel):
             local_path=os.path.join(model_config_path, "ae.safetensors")
         )
         self.vae_model = self.vae_model.to(
-            device=self.device,  # 与主模型同卡
-            dtype=torch.bfloat16,  # ↙️ 关键：统一成 bfloat16
+            device=self.device,
+            dtype=torch.bfloat16,
         ).eval()
         config = BagelConfig(
             visual_gen=visual_gen,
@@ -276,6 +284,17 @@ class BagelInference(BaseModel):
                 output_list=output_list,
                 target_dir=os.path.join("./stored_rl", self.save_file),
             )
+
+        if self.vis_dir is not None:
+            visualize_inference(
+                messages=message,
+                output_list=output_list,
+                response=response,
+                vis_dir=self.vis_dir,
+                sample_idx=self.vis_counter,
+            )
+            self.vis_counter += 1
+
         return response
 
     def print_image_gen_stats(self):

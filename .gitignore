@@ -1,16 +1,41 @@
+# Model weights and datasets
 models/*
 datasets/*
 results/
+LMUData
+
+# Logs and caches
 wandb/*
 **/__pycache__/
+*.log
+*.pyc
+
+# Build artifacts
+**/*.egg-info/
+
+# Outputs and visualizations
 **/outputs/*
+case_out/
+stored_rl/
 VLMEvalKit/outputs/*
 VLMEvalKit/wandb
 VLMEvalKit/output.log
+VLMEvalKit/vis
+VLMEvalKit/vis_merged
+VLMEvalKit/sweep_*
+visualizations/*
+
+# Environment and secrets
+**/.env
+.env
+
+# IDE and tool configs
+.vscode/
+.claude/
+
+# Claude Code
+CLAUDE.md
+
+# Test files
 **/test.*
 VLMEvalKit/config/test.json
-LMUData
-visualizations/*
-CLAUDE.md
-.claude/settings.local.json
-VLMEvalKit/sweep_*

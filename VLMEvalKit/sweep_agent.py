@@ -45,8 +45,8 @@ JUDGE = "gpt-4-0125"
 WANDB_PROJECT = "bagel-sweep"
 
 # Proxy for wandb to reach the internet
-PROXY_URL = "http://agent.baidu.com:8891"
-NO_PROXY = "baidu.com,baidubce.com,localhost,127.0.0.1,bj.bcebos.com"
+PROXY_URL = os.getenv("HTTP_PROXY", "")
+NO_PROXY = os.getenv("NO_PROXY", "localhost,127.0.0.1")
 
 # Benchmark type mapping: dataset_name -> "mcq" or "mmvet"
 BENCHMARK_TYPES = {

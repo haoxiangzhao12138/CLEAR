@@ -49,7 +49,7 @@ class OutputTransfer:
     def __call__(self, output_list, device, id_list):
         sequence_status_list = []
         for i, output in enumerate(output_list):
-            # 过滤掉 latent dict 元素（仅用于 reward 计算，不参与 tokenization）
+            # Filter out latent dict elements (only used for reward computation, not involved in tokenization)
             output = [item for item in output if not isinstance(item, dict)]
             self.format_check(output)
             self.get_flattened_position_ids = get_flattened_position_ids_extrapolate
@@ -99,85 +99,85 @@ class OutputTransfer:
 
     def set_sequence_status(self):
         sequence_status = dict(
-            # 每个样本的长度列表，记录每个样本在打包后序列中的总token数
-            # 数据类型: int
+            # Length of each sample, recording the total number of tokens per sample in the packed sequence
+            # Data type: int
             sequence_length=0,
-            # 每个样本补全部分的token总数（包含图像和文本）
-            # 数据类型: int
+            # Total number of completion tokens per sample (including both image and text)
+            # Data type: int
             completions_tokens=0,
-            # 每个样本补全部分的文本token数量
-            # 数据类型: int
+            # Number of text tokens in the completion part of each sample
+            # Data type: int
             completions_tokens_text=0,
-            # 打包后序列中所有token的位置ID（用于RoPE位置编码）
-            # 格式: [pos_id_0, pos_id_1, ..., pos_id_n]
-            # 数据类型: List[int]
+            # Position IDs for all tokens in the packed sequence (used for RoPE positional encoding)
+            # Format: [pos_id_0, pos_id_1, ..., pos_id_n]
+            # Data type: List[int]
             packed_position_ids=list(),
-            # 嵌套注意力掩码列表，每个元素是一个样本的注意力掩码张量
-            # 格式: [mask_tensor_0, mask_tensor_1, ...]
-            # 数据类型: List[torch.Tensor]
+            # List of nested attention masks, each element is an attention mask tensor for one sample
+            # Format: [mask_tensor_0, mask_tensor_1, ...]
+            # Data type: List[torch.Tensor]
             nested_attention_masks=list(),
-            # 每个片段的长度列表（用于注意力机制）
-            # 格式: [len_0, len_1, len_2, ...] 其中每个len表示一个文本/图像片段的token数量
-            # 数据类型: List[int]
+            # List of segment lengths (used for the attention mechanism)
+            # Format: [len_0, len_1, len_2, ...] where each len is the token count of a text/image segment
+            # Data type: List[int]
             split_lens=list(),
-            # 注意力模式列表，对应split_lens中的每个片段
-            # 值为"causal"（因果注意力）或"full"（全连接注意力）
-            # 格式: ["causal", "full", "causal", ...]
-            # 数据类型: List[str]
+            # List of attention modes corresponding to each segment in split_lens
+            # Values are "causal" (causal attention) or "full" (fully-connected attention)
+            # Format: ["causal", "full", "causal", ...]
+            # Data type: List[str]
             attn_modes=list(),
-            # 打包后的所有文本token ID序列
-            # 格式: [token_id_0, token_id_1, ..., token_id_n]
-            # 数据类型: List[int]
+            # Packed sequence of all text token IDs
+            # Format: [token_id_0, token_id_1, ..., token_id_n]
+            # Data type: List[int]
             packed_text_ids=list(),
-            # 文本token在打包后序列中的位置索引
-            # 格式: [index_0, index_1, ..., index_m] 其中index表示packed_text_ids中token在完整序列中的位置
-            # 数据类型: List[int]
+            # Position indexes of text tokens in the packed sequence
+            # Format: [index_0, index_1, ..., index_m] where index indicates the position of a token from packed_text_ids in the full sequence
+            # Data type: List[int]
             packed_text_indexes=list(),
-            # 打包后的所有文本token ID序列
-            # 格式: [token_id_0, token_id_1, ..., token_id_n]
-            # 数据类型: List[int]
+            # Packed sequence of all text token IDs for cross-entropy loss
+            # Format: [token_id_0, token_id_1, ..., token_id_n]
+            # Data type: List[int]
             ce_loss_text_ids=list(),
-            # 用于计算交叉熵损失的token索引
-            # 格式: [loss_index_0, loss_index_1, ...]
-            # 数据类型: List[int]
+            # Token indexes used for computing cross-entropy loss
+            # Format: [loss_index_0, loss_index_1, ...]
+            # Data type: List[int]
             ce_loss_indexes=list(),
-            # VAE图像张量列表（原始图像经过VAE编码后的潜在表示）
-            # 格式: [vae_tensor_0, vae_tensor_1, ...] 其中每个tensor形状为[C, H, W]
-            # 数据类型: List[torch.Tensor]
+            # List of VAE image tensors (latent representations after VAE encoding of original images)
+            # Format: [vae_tensor_0, vae_tensor_1, ...] where each tensor has shape [C, H, W]
+            # Data type: List[torch.Tensor]
             vae_image_tensors=list(),
-            # VAE图像token的位置ID列表
-            # 格式: [[pos_id_00, pos_id_01, ...], [pos_id_10, ...], ...]
-            # 每个子列表对应一个图像的位置ID
-            # 数据类型: List[List[int]] (后续会被转换为torch.Tensor)
+            # List of position IDs for VAE image tokens
+            # Format: [[pos_id_00, pos_id_01, ...], [pos_id_10, ...], ...]
+            # Each sub-list corresponds to the position IDs of one image
+            # Data type: List[List[int]] (later converted to torch.Tensor)
             packed_latent_position_ids=list(),
-            # VAE潜在空间的形状列表
-            # 格式: [(h0, w0), (h1, w1), ...] 每个元组表示一个图像潜在表示的高度和宽度
-            # 数据类型: List[Tuple[int, int]]
+            # List of VAE latent space shapes
+            # Format: [(h0, w0), (h1, w1), ...] each tuple represents the height and width of an image's latent representation
+            # Data type: List[Tuple[int, int]]
             vae_latent_shapes=list(),
-            # VAE图像token在打包后序列中的位置索引
-            # 格式: [index_0, index_1, ..., index_k]
-            # 数据类型: List[int] (后续会被转换为torch.Tensor)
+            # Position indexes of VAE image tokens in the packed sequence
+            # Format: [index_0, index_1, ..., index_k]
+            # Data type: List[int] (later converted to torch.Tensor)
             packed_vae_token_indexes=list(),
-            # 时间步列表（用于扩散模型等）
-            # 格式: [timestep_0, timestep_1, ...] 通常为float值，可能包含-inf
-            # 数据类型: List[float] (后续会被转换为torch.Tensor)
+            # List of timesteps (used for diffusion models, etc.)
+            # Format: [timestep_0, timestep_1, ...] typically float values, may contain -inf
+            # Data type: List[float] (later converted to torch.Tensor)
             packed_timesteps=list(),
-            # ViT图像token列表
-            # 格式: [vit_token_tensor_0, vit_token_tensor_1, ...] 每个tensor形状为[num_patches, dim]
-            # 数据类型: List[torch.Tensor] (后续会被concat为单个torch.Tensor)
+            # List of ViT image tokens
+            # Format: [vit_token_tensor_0, vit_token_tensor_1, ...] each tensor has shape [num_patches, dim]
+            # Data type: List[torch.Tensor] (later concatenated into a single torch.Tensor)
             packed_vit_tokens=list(),
-            # 每个ViT图像的token序列长度
-            # 格式: [len_0, len_1, ...] 每个值表示对应图像的patch数量
-            # 数据类型: List[int] (后续会被转换为torch.Tensor)
+            # Token sequence length for each ViT image
+            # Format: [len_0, len_1, ...] each value represents the number of patches for the corresponding image
+            # Data type: List[int] (later converted to torch.Tensor)
             vit_token_seqlens=list(),
-            # ViT图像token的位置ID列表
-            # 格式: [[pos_id_00, pos_id_01, ...], [pos_id_10, ...], ...]
-            # 每个子列表对应一个图像的位置ID
-            # 数据类型: List[List[int]] (后续会被转换为torch.Tensor)
+            # List of position IDs for ViT image tokens
+            # Format: [[pos_id_00, pos_id_01, ...], [pos_id_10, ...], ...]
+            # Each sub-list corresponds to the position IDs of one image
+            # Data type: List[List[int]] (later converted to torch.Tensor)
             packed_vit_position_ids=list(),
-            # ViT图像token在打包后序列中的位置索引
-            # 格式: [index_0, index_1, ..., index_p]
-            # 数据类型: List[int] (后续会被转换为torch.Tensor)
+            # Position indexes of ViT image tokens in the packed sequence
+            # Format: [index_0, index_1, ..., index_p]
+            # Data type: List[int] (later converted to torch.Tensor)
             packed_vit_token_indexes=list(),
         )
         return sequence_status

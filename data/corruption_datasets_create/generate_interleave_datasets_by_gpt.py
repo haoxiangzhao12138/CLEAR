@@ -21,19 +21,19 @@ import matplotlib.pyplot as plt
 # =======================
 
 # ---- API ----
-API_KEY = "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
-API_BASE = os.getenv("OPENAI_API_BASE", "http://yy.dbh.baidu-int.com/v1")
+API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
+API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
 JUDGE_MODEL_NAME = os.getenv("JUDGE_MODEL_NAME", "gpt-4.1")
 
 # ---- Paths ----
-CLEAN_IMAGE_DIR = "/root/CLEAR/datasets/processed_dataset/sft/images"
-CORRUPTED_IMAGE_DIR = "/root/CLEAR/datasets/processed_dataset/sft/corruption_images"
-INPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/sft_data.jsonl"
-OUTPUT_JSONL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered.jsonl"
-OUTPUT_JSONL_TOOL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_tool.jsonl"
-OUTPUT_JSONL_NO_TOOL = "/root/CLEAR/datasets/processed_dataset/sft/agent_interleave_data_filtered_no_tool.jsonl"
+CLEAN_IMAGE_DIR = "./datasets/processed_dataset/sft/images"
+CORRUPTED_IMAGE_DIR = "./datasets/processed_dataset/sft/corruption_images"
+INPUT_JSONL = "./datasets/processed_dataset/sft/sft_data.jsonl"
+OUTPUT_JSONL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered.jsonl"
+OUTPUT_JSONL_TOOL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered_tool.jsonl"
+OUTPUT_JSONL_NO_TOOL = "./datasets/processed_dataset/sft/agent_interleave_data_filtered_no_tool.jsonl"
 
 # ---- Concurrency ----
 NUM_WORKERS = 190
@@ -48,7 +48,7 @@ JUDGE_MAX_TOKENS = 128
 
 # ---- Visualization ----
 VISUALIZE_MODE = False
-VISUALIZE_DIR = "/root/CLEAR/visualizations/debug_output_interleave"
+VISUALIZE_DIR = "./visualizations/debug_output_interleave"
 MAX_VISUALIZE_COUNT = 20  # -1 for unlimited
 
 # =======================
@@ -277,7 +277,7 @@ def save_visualization_big(
 
     os.makedirs(VISUALIZE_DIR, exist_ok=True)
 
-    # 多线程下 matplotlib 容易崩，用 lock
+    # matplotlib can crash under multithreading, use a lock
     with visualize_lock:
         fig = plt.figure(figsize=(26, 14))
 
@@ -408,7 +408,7 @@ def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     is_consistent, judge_raw = evaluate_consistency(judge_client, question, gt_answer, pred_answer)
 
     if not is_consistent:
-        # 可视化也可以存一些 rejected（如果你想）
+        # Visualization can also store some rejected items (if desired)
         return {
             "status": "rejected",
             "id": item_id,
@@ -494,7 +494,7 @@ def iter_input_items(input_jsonl: str, skip_ids: set):
 
 
 def process_dataset_multithreaded():
-    # 这里建议：skip 用两个文件的并集，避免重复处理
+    # Recommendation: use the union of both output files for skip_ids to avoid reprocessing
     processed_ids = load_processed_ids(OUTPUT_JSONL_TOOL) | load_processed_ids(OUTPUT_JSONL_NO_TOOL)
     print(f"Resuming: already have {len(processed_ids)} items in output(s).")
 
@@ -520,7 +520,7 @@ def process_dataset_multithreaded():
                     if not res:
                         continue
 
-                    # update stats（不变）
+                    # update stats (unchanged)
                     with stats_lock:
                         global_stats["total"] += 1
                         if res["status"] == "passed":
@@ -539,7 +539,7 @@ def process_dataset_multithreaded():
                             "ToolRate": f"{tool_rate:.1f}%"
                         })
 
-                    # 写 passed item：按 tool_used 分流
+                    # Write passed item: split by tool_used
                     if res["status"] == "passed" and res.get("item"):
                         line = json.dumps(res["item"], ensure_ascii=False) + "\n"
                         with file_write_lock:
@@ -550,7 +550,7 @@ def process_dataset_multithreaded():
                                 out_no_tool.write(line)
                                 out_no_tool.flush()
 
-                    # visualization（不变）
+                    # visualization (unchanged)
                     if VISUALIZE_MODE and res.get("viz"):
                         should_viz = False
                         with stats_lock:

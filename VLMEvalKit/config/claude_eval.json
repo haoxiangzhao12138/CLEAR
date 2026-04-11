@@ -8,8 +8,8 @@
             "img_detail": "high",
             "retry": 10,
             "verbose": true,
-            "api_base": "http://yy.dbh.baidu-int.com/v1/chat/completions",
-            "key": "sk-wc6QL1jTgwMLhq8kxd4cyOFvJvwvFpHPrnHD8nHmjCZo6UBL"
+            "api_base": "https://api.openai.com/v1/chat/completions",
+            "key": "YOUR_API_KEY"
         }
     },
     "data": {

@@ -34,7 +34,7 @@ def check_answer(query, correct_answer, model_prediction, llm_config):
     
     """
     client = OpenAI(
-        # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx",
+        # Set API key via environment variable or replace directly
         api_key=llm_config["config_list"][0]["api_key"],
         base_url=llm_config["config_list"][0]["base_url"],
     )
@@ -47,7 +47,7 @@ def check_answer(query, correct_answer, model_prediction, llm_config):
     Do not explain the reason and only return "True" or "False".
     """
     completion = client.chat.completions.create(
-        model="qwen2.5-vl-72b",  # 此处以qwen-vl-plus为例，可按需更换模型名称。模型列表：https://help.aliyun.com/zh/model-studio/getting-started/models
+        model=os.getenv("JUDGE_MODEL", "gpt-4.1"),
         messages=[
             {
                 "role": "user",

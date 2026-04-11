@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 记录开始时间
+# Record start time
 start_time=$(date +%s)
 
 # 设置 LMUData 数据路径
@@ -17,11 +17,11 @@ torchrun \
     --judge gpt-4-0125 \
     --verbose
 
-# 记录结束时间
+# Record end time
 end_time=$(date +%s)
 duration=$((end_time - start_time))
 hours=$((duration / 3600))
 minutes=$(( (duration % 3600) / 60 ))
 seconds=$((duration % 60))
 
-echo "总运行时间: ${hours}小时 ${minutes}分钟 ${seconds}秒"
+echo "Total runtime: ${hours}h ${minutes}m ${seconds}s"

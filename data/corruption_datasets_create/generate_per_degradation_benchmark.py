@@ -10,7 +10,7 @@ import csv
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-# 防止 CSV 读取大字段报错
+# Prevent CSV field size limit error when reading large fields
 csv.field_size_limit(sys.maxsize)
 
 # 16 degradation methods
@@ -59,7 +59,7 @@ def apply_degradation(image, method_name, intensity):
 
 
 def process_single_row(args):
-    """处理单个图片：对指定 method 施加退化"""
+    """Process a single image: apply the specified degradation method"""
     idx, original_b64, method_name = args
 
     if pd.isna(original_b64) or str(original_b64).strip() == "":
@@ -75,9 +75,9 @@ def process_single_row(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Per-degradation benchmark generation')
-    parser.add_argument('--input_dir', type=str, default='/root/LMUData',
+    parser.add_argument('--input_dir', type=str, default='./LMUData',
                         help='Directory containing the original TSV files')
-    parser.add_argument('--output_dir', type=str, default='/root/LMUData',
+    parser.add_argument('--output_dir', type=str, default='./LMUData',
                         help='Directory to save the processed TSV files')
     parser.add_argument('--workers', type=int, default=128,
                         help='Number of threads to use')
@@ -127,7 +127,7 @@ def main():
                 print(f"Skipping {output_filename}: already exists.")
                 continue
 
-            # 准备任务
+            # Prepare tasks
             tasks = [(idx, img_b64, method_name)
                      for idx, img_b64 in enumerate(df['image'])]
 

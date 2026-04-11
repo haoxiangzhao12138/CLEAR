@@ -5,7 +5,7 @@ from copy import deepcopy
 from PIL import Image
 from data.data_utils import pil_img2rgb
 from inferencer import InterleaveInferencer
-# ================= 定义 Prompt =================
+# ================= Define Prompts =================
 RESTORATION_SYSTEM_PROMPT = """You are a specialized multimodal agent adept at handling low-quality or corrupted visual inputs. Your goal is to answer questions based on an input image that may suffer from degradations (e.g., blur, noise, occlusion, low resolution).
 
 # Tools
@@ -35,7 +35,7 @@ You have access to a special token: **<image_restore>**.
 <think>The user asks if there is a dog in the picture. Although the image has some "salt and pepper" noise, the silhouette and main features of a Golden Retriever are clearly visible in the center. The noise does not hinder my ability to classify the object. I can answer directly without restoration.</think>
 <answer> Yes, there is a dog in the picture. It appears to be a Golden Retriever sitting on the grass. </answer>
 """
-# 这是模拟工具执行后，系统回传给模型的提示
+# This simulates the system response sent back to the model after tool execution
 OBSERVATION_PROMPT = "\nObservation: The image has been restored. Here is the high-quality version.\n"
 
 class RestorationDataGenerator(InterleaveInferencer):
@@ -49,31 +49,31 @@ class RestorationDataGenerator(InterleaveInferencer):
         hq_image: Image.Image,
         question: str,
         max_tokens=1024,
-        temperature=0.7, # 稍微增加一点随机性，让推理过程更多样
+        temperature=0.7, # Slightly increase randomness for more diverse reasoning
         do_sample=True
     ):
         """
-        生成单条数据。
-        返回格式: Dict，包含完整的对话历史和状态。
+        Generate a single data sample.
+        Returns a Dict containing the complete conversation history and status.
         """
-        # 1. 初始化 Context
+        # 1. Initialize Context
         gen_context = self.init_gen_context()
-        conversation_log = [] # 用于最后保存数据的列表
+        conversation_log = [] # List for saving the final data
 
-        # ---------------- ROUND 1: 输入 LQ 图片和问题 ----------------
-        
-        # 注入 System Prompt
+        # ---------------- ROUND 1: Input LQ image and question ----------------
+
+        # Inject System Prompt
         gen_context = self.update_context_text(RESTORATION_SYSTEM_PROMPT, gen_context)
         
-        # 注入 LQ 图片 (只做 ViT 理解，不需要 VAE 生成)
+        # Inject LQ image (only for ViT understanding, no VAE generation needed)
         lq_input = self.vae_transform.resize_transform(pil_img2rgb(lq_image))
         gen_context = self.update_context_image(lq_input, gen_context, vae=False, vit=True)
         
-        # 注入 User Question
-        user_text = f"\nUser: {question}\nAssistant:" # 简单的 Chat 格式封装，视模型训练格式而定
+        # Inject User Question
+        user_text = f"\nUser: {question}\nAssistant:" # Simple chat format wrapper, may vary depending on model training format
         gen_context = self.update_context_text(user_text, gen_context)
 
-        # 生成第一轮回复
+        # Generate first round response
         response_1 = self.gen_text(
             gen_context,
             max_length=max_tokens,
@@ -81,7 +81,7 @@ class RestorationDataGenerator(InterleaveInferencer):
             temperature=temperature
         )
         
-        # ---------------- ROUND 2: 分析与分支 ----------------
+        # ---------------- ROUND 2: Analysis and branching ----------------
 
         tool_pattern = r"<tool_call>.*?</tool_call>"
         answer_pattern = r"<answer>.*?</answer>"
@@ -89,7 +89,7 @@ class RestorationDataGenerator(InterleaveInferencer):
         has_tool_call = re.search(tool_pattern, response_1, re.DOTALL)
         has_final_answer = re.search(answer_pattern, response_1, re.DOTALL)
 
-        # 分支 A: 模型认为不需要修复，直接回答了
+        # Branch A: Model decided restoration is not needed, answered directly
         if has_final_answer and not has_tool_call:
             return {
                 "status": "direct_answer",
@@ -100,20 +100,20 @@ class RestorationDataGenerator(InterleaveInferencer):
                 ]
             }
 
-        # 分支 B: 模型调用了工具 (我们需要拼接 HQ 图片)
+        # Branch B: Model called the tool (we need to append the HQ image)
         elif has_tool_call:
-            # 1. 将第一轮的 response_1 (包含 thinking 和 tool_call) 正式更新进 context
-            # 注意：gen_text 只是生成了 tokens，我们需要手动把这些 tokens 变成 context 的一部分
+            # 1. Formally update response_1 (containing thinking and tool_call) into the context
+            # Note: gen_text only generates tokens; we need to manually make them part of the context
             gen_context = self.update_context_text(response_1, gen_context)
 
-            # 2. 注入 Observation 文本
+            # 2. Inject Observation text
             gen_context = self.update_context_text(OBSERVATION_PROMPT, gen_context)
 
-            # 3. 注入 HQ 图片 (关键步骤：将清晰图作为“工具返回结果”拼接在后面)
+            # 3. Inject HQ image (key step: append the clean image as the “tool return result”)
             hq_input = self.vae_transform.resize_transform(pil_img2rgb(hq_image))
             gen_context = self.update_context_image(hq_input, gen_context, vae=False, vit=True)
 
-            # 4. 生成第二轮回复 (模型看到清晰图后的反应 + 最终答案)
+            # 4. Generate second round response (model's reaction after seeing the clean image + final answer)
             response_2 = self.gen_text(
                 gen_context,
                 max_length=max_tokens,
@@ -121,23 +121,23 @@ class RestorationDataGenerator(InterleaveInferencer):
                 temperature=temperature
             )
 
-            # 构造完整的数据记录
+            # Build the complete data record
             return {
                 "status": "restoration_used",
                 "question": question,
                 "history": [
-                    # 第一轮
+                    # Round 1
                     {"role": "user", "content": [{"type": "image", "source": "lq"}, {"type": "text", "text": question}]},
                     {"role": "assistant", "content": response_1},
-                    # 工具返回 (Observation + HQ Image)
+                    # Tool return (Observation + HQ Image)
                     {"role": "tool", "content": [{"type": "text", "text": OBSERVATION_PROMPT}, {"type": "image", "source": "hq"}]},
-                    # 第二轮 (最终回答)
+                    # Round 2 (final answer)
                     {"role": "assistant", "content": response_2}
                 ]
             }
 
         else:
-            # 异常情况 (比如生成了一半断了)
+            # Abnormal case (e.g., generation was cut off midway)
             return {"status": "failed", "raw_output": response_1}
 
 

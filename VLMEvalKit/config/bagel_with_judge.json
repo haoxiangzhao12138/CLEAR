@@ -3,7 +3,7 @@
         "BAGEL-PE": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "../results/20250908_001731_mix/0006000",
+            "model_param_path": "../results/<YOUR_CHECKPOINT>",
             "reasoning_mode": "image",
             "max_think_token_n": 256,
             "is_ema": true,
@@ -12,15 +12,15 @@
         "BAGEL-RE": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "../results/reason_text_grpo_20251028_163030/checkpoint-20",
+            "model_param_path": "../results/<YOUR_CHECKPOINT>",
             "reasoning_mode": "text",
             "max_think_token_n": 4096,
             "is_ema": false
         },
-        "COOPER": {
+        "CLEAR": {
             "class": "BagelInference",
             "model_config_path": "../models/BAGEL-7B-MoT",
-            "model_param_path": "../results/reason_text_grpo_20251028_163030/checkpoint-20",
+            "model_param_path": "../results/<YOUR_CHECKPOINT>",
             "reasoning_mode": "interleave",
             "max_think_token_n": 4096,
             "is_ema": false
