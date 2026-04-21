@@ -3,7 +3,7 @@ export WANDB_MODE=offline
 
 ts=$(date +"%Y%m%d_%H%M%S")
 export WANDB_PROJECT=clear_interleave_rl
-export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_new_standard
+export WANDB_RUN_NAME=reason_interleave_grpo_${ts}_distill_per_token
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
@@ -24,14 +24,14 @@ torchrun \
     --reward_funcs accuracy format decision latent_quality \
     --enable_reward_accuracy True \
     --enable_reward_format True \
-    --enable_reward_decision True \
-    --enable_reward_latent_quality True \
+    --enable_reward_decision False \
+    --enable_reward_latent_quality False \
     --latent_reward_mode vae \
     --max_think_token_n 4096 \
     --max_completion_length 16384 \
     --output_need_vae True \
     --output_need_vit False \
-    --loss_type grpo \
+    --loss_type dr_grpo \
     --scale_rewards False \
     --learning_rate 5e-6 \
     --lr_scheduler_type cosine \
@@ -42,17 +42,17 @@ torchrun \
     --mask_truncated_completions false \
     --use_liger_kernel false \
     --per_device_train_batch_size 1 \
-    --gradient_accumulation_steps 16 \
+    --gradient_accumulation_steps 32 \
     --ddp_timeout 7200 \
     --logging_steps 1 \
     --report_to wandb \
-    --gradient_checkpointing false \
-    --max_steps 200 \
+    --gradient_checkpointing True \
+    --max_steps 400 \
     --run_name $WANDB_RUN_NAME \
     --save_steps 50\
     --save_only_model true \
     --model_path ./models/BAGEL-7B-MoT \
-    --model_param_path ./results/checkpoint \
+    --model_param_path /root/paddlejob/gpfsspace/haoxiangzhao/CLEAR/results/20260415_225153_distill_per_layer_more_995/0008000 \
     --layer_module Qwen2MoTDecoderLayer \
     --max_latent_size 64 \
     --use_flex False \
@@ -63,5 +63,5 @@ torchrun \
     --num_timesteps_train 20 \
     --image_loss_weight 0.5 \
     --trajectory_selection_strategy round_robin \
-    --separate_image_rewards True \
+    --separate_image_rewards False \
     --decision_reward_smooth False

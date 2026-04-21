@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 import re
 import torch
@@ -38,6 +40,18 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from data.data_utils import patchify
+
+
+# Global logging utilities for debugging
+def log_rank_0(message, level="INFO"):
+    """Log message only from rank 0 to avoid duplicate output."""
+    import torch.distributed as dist
+    if dist.is_initialized():
+        if dist.get_rank() == 0:
+            print(f"[RL][{level}] {message}")
+    else:
+        print(f"[RL][{level}] {message}")
+
 
 # Global variable for decision reward smooth setting
 _decision_reward_smooth = True
@@ -302,7 +316,12 @@ class GRPOTrainingArguments(GRPOConfig):
 # ============ Reward Components ============
 _image_reward_components = {}
 # Accuracy result cache for decision_reward_auto reuse (avoid duplicate LLM API calls)
-_accuracy_cache = {"results": None}
+# Note: In multi-process training, each process maintains its own cache
+# This is intentional as each process handles its own batch of samples
+_accuracy_cache = {
+    "results": None,
+    "step": 0  # Track cache step to avoid stale data
+}
 
 
 def format_reward_v2(completions, **kwargs):
@@ -385,6 +404,7 @@ def decision_reward_auto(completions, solution, question, **kwargs):
     # Read cached results from accuracy_reward_v2
     acc_results = _accuracy_cache.get("results")
     if acc_results is None:
+        print("[decision_reward] Warning: accuracy_cache is None, falling back to LLM call")
         # If accuracy didn't run first (should not happen), fallback to LLM call
         acc_results = _call_llm_judge(completions, solution, question)
 
@@ -393,7 +413,8 @@ def decision_reward_auto(completions, solution, question, **kwargs):
         parts = completion[3:]  # Skip prompt
         text_content = " ".join(x for x in parts if isinstance(x, str))
         did_restore = "<image_restore>" in text_content
-        correct = acc_results[idx] > 0.5
+        # Ensure we have a result for this index
+        correct = acc_results[idx] > 0.5 if idx < len(acc_results) else False
 
         if use_smooth:
             # Smooth reward curve
@@ -607,8 +628,8 @@ def _call_llm_judge(completions, solutions, questions):
     Call LLM to judge answer correctness.
     Core logic extracted from accuracy_reward_with_llm.
     """
-    base_url = os.getenv("OPENAI_API_BASE", "https://api.openai.com")
-    api_key = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
+    base_url = os.getenv("OPENAI_API_BASE", "http://yy.dbh.baidu-int.com/")
+    api_key = os.getenv("OPENAI_API_KEY", "sk-8g1UQEQyv8c9DafozMsubrfddZPvb61pLflnihSxwum8bn9Q")
     system_prompt = """
     You are an intelligent chatbot designed for evaluating the correctness of generative outputs for question-answer pairs.
     Your task is to compare the predicted answer with the correct answer and rate the correctness on a continuous scale. Here's how you can accomplish the task:
@@ -635,12 +656,13 @@ def _call_llm_judge(completions, solutions, questions):
     Score: <float between 0.0 and 1.0>
     Example: Score: 0.85
     """
-    max_retries = 3
-    timeout = 30
-    max_workers = 64
+    max_retries = 5
+    timeout = 60
+    max_workers = min(64, len(completions))  # Limit to actual number of samples
     model = "gpt-4.1"
 
-    def process_single(prompt: str) -> float:
+    def process_single(prompt: str, idx: int) -> float:
+        """Process a single prediction with retry logic."""
         client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         messages = [
             {"role": "system", "content": system_prompt},
@@ -667,17 +689,32 @@ def _call_llm_judge(completions, solutions, questions):
                     return 1.0
                 elif "false" in content:
                     return 0.0
-            except (APIConnectionError, RateLimitError, APIStatusError) as e:
-                print(f"Error: {e}")
-                if attempt == max_retries - 1:
+                # If we get here, the response format was unexpected
+                print(f"[accuracy_reward] Unexpected response format for idx {idx}: {content[:100]}")
+                return 0.5  # Return neutral score for unexpected formats
+            except (APIConnectionError, RateLimitError) as e:
+                print(f"[accuracy_reward] API connection/rate limit error for idx {idx} (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    sleep_time = min(60, 2 ** attempt)  # Exponential backoff, capped at 60s
+                    time.sleep(sleep_time)
+                else:
+                    print(f"[accuracy_reward] Max retries reached for idx {idx}, returning 0.0")
                     return 0.0
-                time.sleep(2 ** attempt)
+            except APIStatusError as e:
+                print(f"[accuracy_reward] API status error for idx {idx}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    return 0.0
             except Exception as e:
-                print(f"Error: {e}")
-                if attempt == max_retries - 1:
+                print(f"[accuracy_reward] Unexpected error for idx {idx} (attempt {attempt+1}/{max_retries}): {type(e).__name__}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                else:
                     return 0.0
         return 0.0
 
+    # Prepare prompts
     prompts = []
     skip_indices = set()
     answer_list = []
@@ -697,18 +734,27 @@ def _call_llm_judge(completions, solutions, questions):
         ))
 
     results = [0.0] * len(prompts)
+    valid_indices = [i for i in range(len(prompts)) if i not in skip_indices]
+
+    # Use ThreadPoolExecutor for parallel API calls
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
-            executor.submit(process_single, prompt): idx
-            for idx, prompt in enumerate(prompts)
-            if idx not in skip_indices
+            executor.submit(process_single, prompt, idx): idx
+            for idx, prompt in zip(valid_indices, [prompts[i] for i in valid_indices])
         }
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             try:
                 results[idx] = float(future.result())
-            except Exception:
+            except Exception as e:
+                print(f"[accuracy_reward] Error processing future for idx {idx}: {e}")
                 results[idx] = 0.0
+
+    # Log summary statistics
+    nonzero_count = sum(1 for r in results if r > 0)
+    print(f"[accuracy_reward] Summary: mean={sum(results)/len(results):.3f}, "
+          f"nonzero={nonzero_count}/{len(results)}, "
+          f"failed={len(results) - nonzero_count}/{len(results)}")
 
     return results
 
@@ -721,6 +767,7 @@ def accuracy_reward_v2(completions, solution, question, **kwargs):
     rewards = _call_llm_judge(completions, solution, question)
     # Cache results so decision_reward_auto can read them when it runs next
     _accuracy_cache["results"] = rewards
+    _accuracy_cache["step"] += 1  # Increment cache step to track updates
     # Log API success rate for debugging
     nonzero_count = sum(1 for r in rewards if r > 0)
     print(f"[accuracy_reward] scores: mean={sum(rewards)/len(rewards):.3f}, "
@@ -886,25 +933,38 @@ def main(grpo_args, training_args, model_args):
     reward_funcs = []
     for func in active_reward_names:
         reward_funcs.append(reward_funcs_registry[func])
-    # Load the dataset
-    train_set = GRPODataset(
-        jsonl_path=grpo_args.jsonl_path, image_root=grpo_args.image_root
-    )
+    # Load the dataset with error handling
+    log_rank_0(f"Loading dataset from {grpo_args.jsonl_path}")
+    try:
+        train_set = GRPODataset(
+            jsonl_path=grpo_args.jsonl_path, image_root=grpo_args.image_root
+        )
+        log_rank_0(f"Dataset loaded successfully: {len(train_set)} samples")
+    except FileNotFoundError as e:
+        log_rank_0(f"ERROR: Dataset file not found: {e}", "ERROR")
+        raise
+    except Exception as e:
+        log_rank_0(f"ERROR: Failed to load dataset: {e}", "ERROR")
+        raise
 
     # Store decision_reward_smooth in a global variable for decision_reward_auto
     global _decision_reward_smooth
     _decision_reward_smooth = training_args.decision_reward_smooth
 
     # Log active components
-    print(f"[GRPO Config] Active rewards: {active_reward_names}")
-    print(f"[GRPO Config] use_text_grpo: {training_args.use_text_grpo}")
-    print(f"[GRPO Config] use_flow_grpo: {training_args.use_flow_grpo}")
-    print(f"[GRPO Config] trajectory_selection_strategy: {training_args.trajectory_selection_strategy}")
-    print(f"[GRPO Config] separate_image_rewards: {training_args.separate_image_rewards}")
-    print(f"[GRPO Config] decision_reward_smooth: {training_args.decision_reward_smooth}")
-    print(f"[GRPO Config] num_timesteps: {training_args.num_timesteps}")
-    print(f"[GRPO Config] num_timesteps_train: {training_args.num_timesteps_train}")
-    print(f"[GRPO Config] image_loss_weight: {training_args.image_loss_weight}")
+    log_rank_0("=" * 60)
+    log_rank_0("GRPO Training Configuration")
+    log_rank_0("=" * 60)
+    log_rank_0(f"Active rewards: {active_reward_names}")
+    log_rank_0(f"use_text_grpo: {training_args.use_text_grpo}")
+    log_rank_0(f"use_flow_grpo: {training_args.use_flow_grpo}")
+    log_rank_0(f"trajectory_selection_strategy: {training_args.trajectory_selection_strategy}")
+    log_rank_0(f"separate_image_rewards: {training_args.separate_image_rewards}")
+    log_rank_0(f"decision_reward_smooth: {training_args.decision_reward_smooth}")
+    log_rank_0(f"num_timesteps: {training_args.num_timesteps}")
+    log_rank_0(f"num_timesteps_train: {training_args.num_timesteps_train}")
+    log_rank_0(f"image_loss_weight: {training_args.image_loss_weight}")
+    log_rank_0("=" * 60)
 
     # Initialize the GRPO trainer
     trainer = BagelInterleaveGRPOTrainer(
@@ -930,6 +990,21 @@ def main(grpo_args, training_args, model_args):
         "latent_quality": 0.0,  # Keep key for compatibility, but weight is 0 (no photo-level reconstruction incentive)
     }
     reward_weights = [weight_map[name] for name in active_reward_names]
+
+    # Log reward weights for debugging
+    log_rank_0("Reward Weights:")
+    for name, weight in zip(active_reward_names, reward_weights):
+        log_rank_0(f"  {name}: {weight}")
+    log_rank_0(f"Total weight: {sum(reward_weights)}")
+
+    # Warn if separate_image_rewards is enabled but latent_quality is not
+    if training_args.separate_image_rewards and "latent_quality" not in active_reward_names:
+        log_rank_0("WARNING: separate_image_rewards=True but latent_quality is not in active rewards!",
+                  "WARN")
+        log_rank_0("This will cause image_advantages to be None and separate image rewards won't work.",
+                  "WARN")
+        log_rank_0("Consider either enabling latent_quality reward or setting separate_image_rewards=False.",
+                  "WARN")
     trainer.reward_weights = torch.tensor(reward_weights, dtype=torch.float32)
 
     # Train and push the model to the Hub

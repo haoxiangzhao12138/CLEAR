@@ -12,7 +12,7 @@
 
 from dataclasses import dataclass
 from functools import partial
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -199,7 +199,7 @@ class Qwen2Config(_Qwen2Config):
         self.qk_norm = qk_norm
         self.layer_module = layer_module
         self.freeze_und = freeze_und
-        self.gradient_checkpointing = True
+        self.gradient_checkpointing = False
 
 
 class NaiveCache:
@@ -1212,6 +1212,7 @@ class Qwen2Model(Qwen2PreTrainedModel):
         packed_position_ids: torch.Tensor,
         packed_und_token_indexes: Optional[torch.LongTensor] = None,
         packed_gen_token_indexes: Optional[torch.LongTensor] = None,
+        distill_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
 
         if self.config.freeze_und:
@@ -1243,6 +1244,8 @@ class Qwen2Model(Qwen2PreTrainedModel):
         #         packed_position_embeddings=packed_position_embeddings,
         #         **extra_inputs,
         #     )
+
+        layer_distill_loss = torch.tensor(0.0, device=packed_sequence.device, dtype=packed_sequence.dtype) if distill_fn is not None else None
 
         # If gradient checkpointing is enabled
         if self.gradient_checkpointing and self.training:
@@ -1280,9 +1283,13 @@ class Qwen2Model(Qwen2PreTrainedModel):
                         packed_position_embeddings=packed_position_embeddings,
                         **extra_inputs,
                     )
+                if distill_fn is not None:
+                    dl = distill_fn(i, packed_sequence)
+                    if dl is not None:
+                        layer_distill_loss = layer_distill_loss + dl
         else:
             # Original forward pass logic
-            for decoder_layer in self.layers:
+            for i, decoder_layer in enumerate(self.layers):
                 packed_sequence = decoder_layer(
                     packed_sequence=packed_sequence,
                     sample_lens=sample_lens,
@@ -1290,6 +1297,10 @@ class Qwen2Model(Qwen2PreTrainedModel):
                     packed_position_embeddings=packed_position_embeddings,
                     **extra_inputs,
                 )
+                if distill_fn is not None:
+                    dl = distill_fn(i, packed_sequence)
+                    if dl is not None:
+                        layer_distill_loss = layer_distill_loss + dl
 
         if self.use_moe:
             packed_sequence_ = torch.zeros_like(packed_sequence)
@@ -1303,8 +1314,12 @@ class Qwen2Model(Qwen2PreTrainedModel):
             packed_sequence_[packed_gen_token_indexes] = self.norm_moe_gen(
                 packed_sequence[packed_gen_token_indexes]
             )
+            if distill_fn is not None:
+                return packed_sequence_, layer_distill_loss
             return packed_sequence_
         else:
+            if distill_fn is not None:
+                return self.norm(packed_sequence), layer_distill_loss
             return self.norm(packed_sequence)
 
     def forward_inference(
@@ -1427,6 +1442,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
         packed_position_ids: torch.Tensor,
         packed_und_token_indexes: Optional[torch.LongTensor] = None,
         packed_gen_token_indexes: Optional[torch.LongTensor] = None,
+        distill_fn: Optional[Callable] = None,
     ) -> torch.Tensor:
 
         outputs = self.model(
@@ -1436,6 +1452,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel):
             attention_mask=attention_mask,
             packed_und_token_indexes=packed_und_token_indexes,
             packed_gen_token_indexes=packed_gen_token_indexes,
+            distill_fn=distill_fn,
         )
         return outputs
 

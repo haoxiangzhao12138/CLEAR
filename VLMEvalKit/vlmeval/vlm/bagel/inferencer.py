@@ -686,6 +686,7 @@ class InterleaveInferencer:
                         cfg_renorm_min=cfg_renorm_min,
                         cfg_renorm_type=cfg_renorm_type,
                     )
+                    output_list.append(img)
 
                     # 4. Feed results back
                     # Decide whether to insert generated image back into model KV cache based on switches

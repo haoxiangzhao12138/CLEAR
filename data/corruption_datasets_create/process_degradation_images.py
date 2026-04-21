@@ -58,19 +58,24 @@ def apply_degradation_Benchmark(image, method_name, intensity):
     degraded_img = degradation_func(image, intensity)
     return degraded_img
 
-def process_single_image(filename, folder_path, output_dir):
+def process_single_image(filename, folder_path, output_dir, metadata_dir):
     """
     1. Randomly select a method based on new weights (hard methods have higher probability)
     2. Select intensity in a 2:3:5 ratio [0.23, 0.45, 0.9]
-    3. Save
+    3. Save image and degradation metadata
     """
     np.random.seed()
     random.seed()
-    
+
     try:
+        save_path = os.path.join(output_dir, filename)
+        # Skip already processed images (supports resuming)
+        if os.path.exists(save_path):
+            return True, None
+
         image_path = os.path.join(folder_path, filename)
         image = cv2.imread(image_path)
-        
+
         if image is None:
             return False, f"Could not read image: {filename}"
 
@@ -80,16 +85,22 @@ def process_single_image(filename, folder_path, output_dir):
         # 2. Select intensity by ratio (hard:medium:easy = 5:3:2)
         intensity_options = [0.23, 0.45, 0.9]
         intensity_probs   = [0.2,  0.3,  0.5]
-        
+
         intensity = np.random.choice(intensity_options, p=intensity_probs)
 
         # 3. Apply degradation
         degraded_img = apply_degradation_Benchmark(image, selected_method_name, intensity)
-        
+
         # 4. Save
-        save_path = os.path.join(output_dir, filename)
         cv2.imwrite(save_path, degraded_img)
-        
+
+        # 5. Record metadata (useful for analysis / reproducibility)
+        if metadata_dir:
+            meta_path = os.path.join(metadata_dir, filename + ".json")
+            import json
+            with open(meta_path, "w") as f:
+                json.dump({"method": selected_method_name, "intensity": float(intensity)}, f)
+
         return True, None
 
     except Exception as e:
@@ -103,30 +114,36 @@ def main():
     parser.add_argument('--output_dir', type=str,
                        default="./datasets/processed_dataset/rl/corruption_images",
                        help='Output directory')
-    
+    parser.add_argument('--metadata_dir', type=str, default=None,
+                       help='Directory to save per-image degradation metadata (optional)')
+
     args = parser.parse_args()
-    
+
     folder_path = args.input_dir
     output_dir = args.output_dir
-    
+    metadata_dir = args.metadata_dir
+
     if not os.path.exists(folder_path):
         raise ValueError(f"Input directory does not exist: {folder_path}")
 
     os.makedirs(output_dir, exist_ok=True)
+    if metadata_dir:
+        os.makedirs(metadata_dir, exist_ok=True)
 
     print("Scanning and filtering image files...")
     valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
     all_files = os.listdir(folder_path)
     image_files = [f for f in all_files if f.lower().endswith(valid_extensions)]
-    
+
     total_files = len(image_files)
     print(f"Found {total_files} images in total, output directory: {output_dir}")
     print(f"Strategy: increased weight for hard degradations + intensity biased toward 0.9 (50%)")
-    
+
     process_func = partial(
-        process_single_image, 
-        folder_path=folder_path, 
-        output_dir=output_dir
+        process_single_image,
+        folder_path=folder_path,
+        output_dir=output_dir,
+        metadata_dir=metadata_dir,
     )
 
     error_count = 0

@@ -21,8 +21,8 @@ def motion_blur(img: np.ndarray, intensity: float = 0.5) -> np.ndarray:
 def lens_blur(img: np.ndarray, intensity: float = 0.5) -> np.ndarray:
     if img is None:
         raise ValueError("Input image is None")
-    
-    kernel_size = int(3 + intensity * 300) | 1
+
+    kernel_size = min(101, int(3 + intensity * 300)) | 1
     sigma = intensity * 20
     
     kernel = cv2.getGaussianKernel(kernel_size, sigma)

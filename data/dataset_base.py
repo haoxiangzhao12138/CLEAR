@@ -32,6 +32,7 @@ class DataConfig:
         vit_patch_size=14,
         max_num_patch_per_side=70,
         output_need_vit=True,
+        enable_distill=False,
     ):
         self.grouped_datasets = grouped_datasets
         self.text_cond_dropout_prob = text_cond_dropout_prob
@@ -42,6 +43,7 @@ class DataConfig:
         self.vae_image_downsample = vae_image_downsample
         self.max_latent_size = max_latent_size
         self.output_need_vit = output_need_vit
+        self.enable_distill = enable_distill
 
 
 class PackedDataset(torch.utils.data.IterableDataset):
@@ -153,6 +155,7 @@ class PackedDataset(torch.utils.data.IterableDataset):
 
             # Pass the output_need_vit parameter
             dataset_args["output_need_vit"] = self.data_config.output_need_vit
+            dataset_args["enable_distill"] = self.data_config.enable_distill
 
             resume_data_status = dataset_args.pop("resume_data_status", True)
             if (

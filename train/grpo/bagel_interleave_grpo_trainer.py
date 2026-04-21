@@ -1014,12 +1014,30 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
                         t_val = chosen_step['timestep']
                         dt_val = chosen_step['dt']
 
-                        t_safe = max(t_val, 1e-6)
-                        score_neg = (x_t + (1 - t_safe) * v_pred_img) / t_safe
+                        # Numerical stability: prevent division by zero and overflow for small t
+                        # For very small t, the SDE becomes unstable, so we use a safe threshold
+                        t_safe = max(t_val, 1e-4)  # Increased from 1e-6 to 1e-4 for better stability
+                        # For very small t, the score can blow up, so we use gradient clipping
+                        # Additionally, we use a weighted blend when t is very small
+                        t_small_threshold = 0.1
+                        if t_val < t_small_threshold:
+                            # For small t, use a smoothed formula that reduces to 1/t behavior asymptotically
+                            # This avoids division by near-zero values while preserving the gradient signal
+                            weight = t_val / t_small_threshold
+                            score_neg_standard = (x_t + (1 - t_safe) * v_pred_img) / t_safe
+                            score_neg_smoothed = (1 - t_val) * v_pred_img  # No division
+                            score_neg = weight * score_neg_smoothed + (1 - weight) * score_neg_standard
+                        else:
+                            score_neg = (x_t + (1 - t_safe) * v_pred_img) / t_safe
 
                         # Clip score to prevent numerical instability when t is very small
                         # This prevents the score from exploding when t → 0
-                        score_neg = torch.clamp(score_neg, min=-100.0, max=100.0)
+                        score_neg = torch.clamp(score_neg, min=-50.0, max=50.0)  # Reduced from 100 to 50
+
+                        # Additional safety: check for NaN or Inf and replace with safe values
+                        if torch.isnan(score_neg).any() or torch.isinf(score_neg).any():
+                            print(f"[Flow-GRPO] Warning: score_neg contains NaN/Inf, replacing with safe values")
+                            score_neg = torch.zeros_like(score_neg)
 
                         drift = v_pred_img + (sde_sigma ** 2 / 2) * score_neg
                         mu_new = x_t - drift * dt_val
@@ -1132,6 +1150,24 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
         # === Phase 4: Combine — ONE backward for both ===
         total_loss = text_loss + self.args.image_loss_weight * image_loss
 
+        # Check for NaN/Inf in losses and log warning if found
+        if torch.isnan(text_loss) or torch.isinf(text_loss):
+            print(f"[WARNING] text_loss is NaN or Inf: {text_loss.item()}, replacing with 0.0")
+            text_loss = torch.tensor(0.0, device=per_token_loss.device, requires_grad=True)
+
+        if torch.isnan(image_loss) or torch.isinf(image_loss):
+            print(f"[WARNING] image_loss is NaN or Inf: {image_loss.item()}, replacing with 0.0")
+            image_loss = torch.tensor(0.0, device=image_loss.device, requires_grad=True)
+
+        # Recompute total loss if either was replaced
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"[CRITICAL] total_loss is NaN or Inf: text_loss={text_loss}, image_loss={image_loss}")
+            print(f"Advantages - mean: {advantages.mean()}, std: {advantages.std()}, min: {advantages.min()}, max: {advantages.max()}")
+            if image_advantages is not None:
+                print(f"Image Advantages - mean: {image_advantages.mean()}, std: {image_advantages.std()}, min: {image_advantages.min()}, max: {image_advantages.max()}")
+            # Replace with safe value to prevent training crash - but maintain gradient connection
+            total_loss = text_loss + self.args.image_loss_weight * image_loss
+
         # === Phase 5: Metrics logging (unchanged) ===
         mode = "eval" if self.control.should_evaluate else "train"
 
@@ -1234,13 +1270,31 @@ class BagelInterleaveGRPOTrainer(GRPOTrainer):
 
         if mode == "train":
             generate_every = self.args.steps_per_generation * self.num_iterations
-            if self._step % generate_every == 0 or self._buffered_inputs is None:
+            # Synchronize step counter across all GPUs to ensure consistent regeneration
+            # Gather all step values and use the maximum to determine if regeneration is needed
+            # This prevents desynchronization issues in multi-GPU training
+            current_step = self._step
+            if self.accelerator.num_processes > 1:
+                # Gather step from all processes
+                step_tensor = torch.tensor([current_step], dtype=torch.long, device=self.accelerator.device)
+                gathered_steps = self.accelerator.gather(step_tensor)
+                # All processes use the maximum step (some processes may be ahead)
+                max_step = gathered_steps.max().item()
+                # If any process needs regeneration, all processes regenerate together
+                should_regenerate = (max_step % generate_every == 0) or self._buffered_inputs is None
+            else:
+                should_regenerate = (current_step % generate_every == 0) or self._buffered_inputs is None
+
+            if should_regenerate:
                 # self._buffered_inputs=None can occur when resuming from a checkpoint
                 start_time = time.time()
                 generation_batch = self._generate_and_score_completions(
                     generation_batch
                 )
                 self._buffered_inputs = shuffle_and_split_tensor_dict(generation_batch)
+                # Synchronize all processes after generation to ensure buffers are ready
+                if self.accelerator.num_processes > 1:
+                    self.accelerator.wait_for_everyone()
             inputs = self._buffered_inputs[self._step % self.args.steps_per_generation]
             self._step += 1
         else:

@@ -160,8 +160,18 @@ def resolve_image_path(image_filename: str) -> Optional[str]:
 # 4) Per-item processing
 # =======================
 
+# Thread-local OpenAI client (reuse per thread instead of per item)
+import threading as _threading
+_thread_local = _threading.local()
+
+def _get_client() -> OpenAI:
+    if not hasattr(_thread_local, "client"):
+        _thread_local.client = create_client()
+    return _thread_local.client
+
+
 def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    agent_client = create_client()
+    agent_client = _get_client()
 
     conversations = item.get("conversations", [])
     if len(conversations) < 2:
@@ -244,7 +254,7 @@ def load_processed_ids(output_jsonl: str) -> set:
             try:
                 obj = json.loads(line)
                 processed.add(obj.get("id"))
-            except:
+            except Exception:
                 pass
     return processed
 
@@ -263,7 +273,7 @@ def load_and_sample_items(input_jsonl: str, skip_ids: set, sample_size: int):
                 obj = json.loads(line)
                 if obj.get("id") not in skip_ids:
                     candidates.append(obj)
-            except:
+            except Exception:
                 continue
     
     total_candidates = len(candidates)

@@ -72,6 +72,7 @@ class InterleaveReasonIterableDataset(
         clean_image_dir,    # [Custom parameter] Clean image directory
         corrupted_image_dir,# [Custom parameter] Corrupted image directory
         output_need_vit=True,  # [New] Controls whether output images need ViT
+        enable_distill=False,  # When True, align ViT resize to match VAE token grid
         local_rank=0,
         world_size=1,
         num_workers=1,
@@ -82,6 +83,7 @@ class InterleaveReasonIterableDataset(
         self.clean_image_dir = clean_image_dir
         self.corrupted_image_dir = corrupted_image_dir
         self.output_need_vit = output_need_vit
+        self.enable_distill = enable_distill
 
         # 2. Initialize parent class JSONLStandardIterableDataset
         # This parent class handles: distributed sharding, checkpoint resumption (data_status), multi-worker reading
@@ -197,6 +199,7 @@ class TextReasonIterableDataset(
         data_dir_list,      # From PackedDataset
         num_used_data,      # From YAML
         corrupted_image_dir,# [Custom parameter] Corrupted image directory
+        enable_distill=False,
         local_rank=0,
         world_size=1,
         num_workers=1,
@@ -205,6 +208,7 @@ class TextReasonIterableDataset(
     ):
         # 1. Save custom paths
         self.corrupted_image_dir = corrupted_image_dir
+        self.enable_distill = enable_distill
 
         # 2. Initialize parent class JSONLStandardIterableDataset
         # This parent class handles: distributed sharding, checkpoint resumption (data_status), multi-worker reading

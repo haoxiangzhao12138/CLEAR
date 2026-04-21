@@ -341,9 +341,24 @@ def save_visualization_big(
 # 4) Per-item processing
 # =======================
 
+# Thread-local OpenAI clients (reuse per thread instead of per item)
+import threading
+_thread_local = threading.local()
+
+def _get_client() -> OpenAI:
+    if not hasattr(_thread_local, "client"):
+        _thread_local.client = create_client()
+    return _thread_local.client
+
+def _get_judge_client() -> OpenAI:
+    if not hasattr(_thread_local, "judge_client"):
+        _thread_local.judge_client = create_client()
+    return _thread_local.judge_client
+
+
 def process_single_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    agent_client = create_client()
-    judge_client = create_client()
+    agent_client = _get_client()
+    judge_client = _get_judge_client()
 
     conversations = item.get("conversations", [])
     if len(conversations) < 2:

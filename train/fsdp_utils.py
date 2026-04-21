@@ -130,7 +130,6 @@ class FSDPCheckpoint:
         ema_model,
         optimizer,
         scheduler,
-        # data_status,
         logger,
         fsdp_config,
     ):
@@ -153,7 +152,7 @@ class FSDPCheckpoint:
                     )
                 del ema_state_dict
                 torch.cuda.empty_cache()
-        
+
         with FSDP.state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
@@ -166,6 +165,27 @@ class FSDPCheckpoint:
                 )
             del model_state_dict
             torch.cuda.empty_cache()
+
+        # Save optimizer state (sharded per rank)
+        if fsdp_config.sharding_strategy == "FULL_SHARD":
+            shard_index = dist.get_rank()
+            total_shards = dist.get_world_size()
+        elif fsdp_config.sharding_strategy == "HYBRID_SHARD":
+            shard_index = dist.get_rank() % fsdp_config.num_shard
+            total_shards = fsdp_config.num_shard
+        else:
+            shard_index = dist.get_rank()
+            total_shards = dist.get_world_size()
+
+        optimizer_path = os.path.join(
+            save_path, f"optimizer.{shard_index:05d}-of-{total_shards:05d}.pt"
+        )
+        torch.save(optimizer.state_dict(), optimizer_path)
+
+        # Save scheduler state (same across ranks, save on rank 0)
+        if dist.get_rank() == 0:
+            scheduler_path = os.path.join(save_path, "scheduler.pt")
+            torch.save(scheduler.state_dict(), scheduler_path)
 
         dist.barrier()
         return

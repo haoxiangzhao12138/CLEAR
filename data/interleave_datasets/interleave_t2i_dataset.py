@@ -12,6 +12,8 @@ import os
 from PIL import Image, ImageFile, PngImagePlugin
 import torch
 import random
+from torchvision.transforms import functional as TF
+from torchvision.transforms import InterpolationMode
 
 
 class InterleavedBaseIterableDataset(DistributedIterableDataset):
@@ -51,6 +53,30 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
             pair_id = data["_next_pair_id"]
         else:
             pair_id = -1
+
+        # When distillation is enabled and this image will be paired,
+        # pre-compute an aligned ViT tensor so that ViT token count == VAE token count.
+        # This enables per-token distillation (ViT patch grid matches VAE latent grid).
+        #
+        # VAE token grid: (H_vae / vae_downsample) x (W_vae / vae_downsample)
+        # ViT token grid: (H_vit / vit_patch_size) x (W_vit / vit_patch_size)
+        # To match: H_vit = (H_vae / vae_downsample) * vit_patch_size, same for W.
+        aligned_vit_tensor = None
+        if should_pair and getattr(self, 'enable_distill', False):
+            vae_ref_tensor = self.transform(image)
+            H_vae, W_vae = vae_ref_tensor.shape[1:]
+            vae_ds = self.transform.stride        # == vae_image_downsample (16)
+            vit_ps = self.vit_transform.stride    # == vit_patch_size (14)
+            h_tokens = H_vae // vae_ds
+            w_tokens = W_vae // vae_ds
+            H_vit = h_tokens * vit_ps
+            W_vit = w_tokens * vit_ps
+            resized_img = TF.resize(
+                image, (H_vit, W_vit),
+                InterpolationMode.BICUBIC, antialias=True,
+            )
+            aligned_vit_tensor = self.vit_transform.to_tensor_transform(resized_img)
+            aligned_vit_tensor = self.vit_transform.normalize_transform(aligned_vit_tensor)
 
         if need_loss:
             data["sequence_plan"].append(
@@ -96,7 +122,10 @@ class InterleavedBaseIterableDataset(DistributedIterableDataset):
                     "distill_pair_id": pair_id,
                 },
             )
-            vit_image_tensor = self.vit_transform(image)
+            if aligned_vit_tensor is not None:
+                vit_image_tensor = aligned_vit_tensor
+            else:
+                vit_image_tensor = self.vit_transform(image)
             height, width = vit_image_tensor.shape[1:]
             data["num_tokens"] += width * height // self.vit_transform.stride**2
             data["image_tensor_list"].append(vit_image_tensor)

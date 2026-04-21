@@ -103,6 +103,21 @@ class Bagel(PreTrainedModel):
             nn.init.constant_(self.llm2vae.weight, 0)
             nn.init.constant_(self.llm2vae.bias, 0)
 
+    def get_input_embeddings(self):
+        """
+        Return the input embeddings layer for gradient checkpointing.
+        This is required by transformers when gradient_checkpointing is enabled.
+        The input embeddings are in the language model's model.embed_tokens layer.
+        """
+        return self.language_model.model.embed_tokens
+
+    def set_input_embeddings(self, value):
+        """
+        Set the input embeddings layer for gradient checkpointing.
+        This is required by transformers when gradient_checkpointing is enabled.
+        """
+        self.language_model.model.embed_tokens = value
+
     # This method is called recursively by PreTrainedModel.apply(...) on each submodule
     def _set_gradient_checkpointing(self, module, value: bool = False):
         # If the Qwen2Model / each layer has this flag, propagate it directly
@@ -137,6 +152,8 @@ class Bagel(PreTrainedModel):
         packed_timesteps: Optional[torch.LongTensor] = None,
         mse_loss_indexes: Optional[torch.BoolTensor] = None,
         distill_pairs: Optional[torch.LongTensor] = None,  # shape (N, 2): [vit_img_idx, vae_img_idx]
+        distill_mode: str = "final_mse",  # "final_mse" | "per_layer_kl"
+        distill_layer_stride: int = 4,
     ) -> torch.Tensor:
         
         device = packed_text_ids.device
@@ -198,16 +215,24 @@ class Bagel(PreTrainedModel):
                 packed_sequence[packed_vit_token_indexes] = packed_vit_token_embed
             else:
                 # [Dummy Pass]
-                # Construct minimal input to avoid memory usage, but must produce a computation graph
-                # Use packed_text_embedding[0:1] as input source to ensure connectivity
-                dummy_in = packed_text_embedding[0:1].detach().new_zeros((1, self.vit_hidden_size))
-                # Must enable_grad to ensure intermediate variable tracking
-                dummy_in.requires_grad_(True) 
-                
-                # Connector & PosEmbed
-                d_conn = self.connector(dummy_in)
+                # CRITICAL: Must call self.vit_model even when no ViT tokens exist,
+                # because SiglipVisionTransformer / SiglipEncoderLayer are FSDP-wrapped.
+                # Skipping self.vit_model causes all-gather deadlock (NCCL timeout)
+                # when other ranks do call it.
+                patch_dim = self.vit_model.config.num_channels * self.vit_model.config.patch_size ** 2
+                dummy_pixels = torch.zeros((1, patch_dim), device=device, dtype=dtype)
+                dummy_pos_ids = torch.zeros((1,), device=device, dtype=torch.long)
+                dummy_cu_seqlens = torch.tensor([0, 1], device=device, dtype=torch.int32)
+                dummy_vit_out = self.vit_model(
+                    packed_pixel_values=dummy_pixels,
+                    packed_flattened_position_ids=dummy_pos_ids,
+                    cu_seqlens=dummy_cu_seqlens,
+                    max_seqlen=1,
+                )
+                # Connector & PosEmbed (also FSDP-wrapped)
+                d_conn = self.connector(dummy_vit_out)
                 d_pos = self.vit_pos_embed(torch.zeros((1,), device=device, dtype=torch.long))
-                
+
                 # Accumulate to dummy_loss; multiply by 0 to eliminate numerical impact while preserving gradient chain
                 dummy_loss = dummy_loss + (d_conn.sum() + d_pos.sum()) * 0.0
 
@@ -276,33 +301,90 @@ class Bagel(PreTrainedModel):
                 packed_gen_token_indexes=packed_vae_token_indexes,
             )
 
-        # 6. LLM Forward
-        last_hidden_state = self.language_model(
-            packed_sequence=packed_sequence,
-            sample_lens=sample_lens,
-            attention_mask=attention_mask,
-            packed_position_ids=packed_position_ids,
-            **extra_inputs,
-        )
-
-        # 6.5. Distillation Loss (ViT → VAE)
+        # 6. LLM Forward (with optional distillation)
+        need_distill = distill_pairs is not None and len(distill_pairs) > 0
         distill = None
-        if distill_pairs is not None and len(distill_pairs) > 0:
+
+        if need_distill and distill_mode == "per_layer_kl":
+            # --- Per-layer KL-divergence distillation ---
+            # Pre-compute index splits for distill_fn closure
             vit_splits = torch.split(
                 packed_vit_token_indexes, vit_token_seqlens.tolist()
             )
             vae_token_counts = [h * w for h, w in patchified_vae_latent_shapes]
             vae_splits = torch.split(packed_vae_token_indexes, vae_token_counts)
 
-            distill_losses = []
-            for vit_idx, vae_idx in distill_pairs:
-                vit_pooled = last_hidden_state[vit_splits[vit_idx]].mean(dim=0)
-                vae_pooled = last_hidden_state[vae_splits[vae_idx]].mean(dim=0)
-                # ViT is teacher: detach so no gradient flows to ViT branch
-                distill_losses.append(
-                    ((vit_pooled.detach() - vae_pooled) ** 2).mean()
+            num_layers = len(self.language_model.model.layers)
+
+            # Only distill every `stride` layers to save memory (gradient checkpoint
+            # cannot free activations for layers consumed by distill_fn).
+            # Always include the last layer.
+            distill_layer_set = set(range(distill_layer_stride - 1, num_layers, distill_layer_stride))
+            distill_layer_set.add(num_layers - 1)
+            # Normalized linear-increasing weights over selected layers (sum=1)
+            raw_weights = {i: (i + 1) for i in distill_layer_set}
+            weight_sum = sum(raw_weights.values())
+
+            def distill_fn(layer_idx, hidden_state):
+                if layer_idx not in distill_layer_set:
+                    return None  # skip -- hidden_state not captured, checkpoint can free it
+                weight = raw_weights[layer_idx] / weight_sum
+                total = torch.tensor(0.0, device=device, dtype=dtype)
+                for vit_idx, vae_idx in distill_pairs:
+                    vit_feats = hidden_state[vit_splits[vit_idx]]  # (N, D)
+                    vae_feats = hidden_state[vae_splits[vae_idx]]  # (N, D)
+                    assert vit_feats.shape[0] == vae_feats.shape[0], (
+                        f"per_layer_kl requires matched token counts, got "
+                        f"ViT={vit_feats.shape[0]} vs VAE={vae_feats.shape[0]}. "
+                        f"Ensure enable_distill=True in data config."
+                    )
+                    # Per-token KL: ViT is teacher (detached), VAE is student
+                    vit_log_probs = F.log_softmax(vit_feats.detach(), dim=-1)
+                    vae_log_probs = F.log_softmax(vae_feats, dim=-1)
+                    kl = F.kl_div(vae_log_probs, vit_log_probs, log_target=True, reduction='batchmean')
+                    total = total + kl
+                return weight * total
+
+            llm_output = self.language_model(
+                packed_sequence=packed_sequence,
+                sample_lens=sample_lens,
+                attention_mask=attention_mask,
+                packed_position_ids=packed_position_ids,
+                distill_fn=distill_fn,
+                **extra_inputs,
+            )
+            last_hidden_state, layer_distill_loss = llm_output
+            # Expand to (num_pairs,) so downstream all_reduce normalization
+            # by total_distill_pairs remains consistent with final_mse semantics.
+            num_pairs = len(distill_pairs)
+            distill = layer_distill_loss.expand(num_pairs) / num_pairs
+        else:
+            # --- Standard forward (no per-layer distill) ---
+            last_hidden_state = self.language_model(
+                packed_sequence=packed_sequence,
+                sample_lens=sample_lens,
+                attention_mask=attention_mask,
+                packed_position_ids=packed_position_ids,
+                **extra_inputs,
+            )
+
+            # 6.5. Final-layer MSE Distillation (ViT -> VAE)
+            if need_distill and distill_mode == "final_mse":
+                vit_splits = torch.split(
+                    packed_vit_token_indexes, vit_token_seqlens.tolist()
                 )
-            distill = torch.stack(distill_losses)
+                vae_token_counts = [h * w for h, w in patchified_vae_latent_shapes]
+                vae_splits = torch.split(packed_vae_token_indexes, vae_token_counts)
+
+                distill_losses = []
+                for vit_idx, vae_idx in distill_pairs:
+                    vit_pooled = last_hidden_state[vit_splits[vit_idx]].mean(dim=0)
+                    vae_pooled = last_hidden_state[vae_splits[vae_idx]].mean(dim=0)
+                    # ViT is teacher: detach so no gradient flows to ViT branch
+                    distill_losses.append(
+                        ((vit_pooled.detach() - vae_pooled) ** 2).mean()
+                    )
+                distill = torch.stack(distill_losses)
 
         # 7. MSE Loss Calculation (Output Side)
         mse = None
@@ -328,7 +410,7 @@ class Bagel(PreTrainedModel):
         # 8. CE Loss Calculation
         ce = None
         if ce_loss_indexes is not None:
-            if ce_loss_indexes.sum() > 0:
+            if len(ce_loss_indexes) > 0:
                 packed_ce_preds = self.language_model.lm_head(
                     last_hidden_state[ce_loss_indexes]
                 )

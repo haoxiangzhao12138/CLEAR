@@ -13,7 +13,7 @@ torchrun \
     --nproc-per-node=8 \
     --master_port=29503 \
     run.py \
-    --config ./config/CV-Bench-2D_per_degradation.json \
+    --config ./config/test.json \
     --judge gpt-4-0125 \
     --verbose
 

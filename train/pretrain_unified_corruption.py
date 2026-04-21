@@ -42,6 +42,21 @@ from train.fsdp_utils import (
 import datetime
 import os
 
+# import debugpy
+# try:
+#     # 调试配置
+#     debugpy.listen(("localhost", 9501))
+#     print("Waiting for debugger attach")
+#     debugpy.wait_for_client()
+# except Exception as e:
+#     pass
+# import torch
+# def custom_repr(self):
+#     return f'{{Tensor:{tuple(self.shape)}}} {original_repr(self)}'
+
+# original_repr = torch.Tensor.__repr__
+# torch.Tensor.__repr__ = custom_repr
+
 
 @dataclass
 class ModelArguments:
@@ -306,6 +321,9 @@ class TrainingArguments:
             "help": "Decay rate for the exponential moving average of model weights."
         },
     )
+    weight_decay: float = field(
+        default=0.0, metadata={"help": "AdamW weight decay coefficient."}
+    )
     max_grad_norm: int = field(
         default=1.0, metadata={"help": "Gradient clipping threshold (L2 norm)."}
     )
@@ -326,6 +344,20 @@ class TrainingArguments:
     distill_weight: float = field(
         default=0.0,
         metadata={"help": "Scaling factor for ViT-VAE feature distillation loss."},
+    )
+    distill_mode: str = field(
+        default="final_mse",
+        metadata={
+            "help": "Distillation mode: 'final_mse' (mean-pooled MSE on last hidden state) "
+                    "or 'per_layer_kl' (per-token KL divergence at intermediate layers)."
+        },
+    )
+    distill_layer_stride: int = field(
+        default=4,
+        metadata={
+            "help": "For per_layer_kl mode: distill every N-th layer (plus the last layer). "
+                    "Larger stride saves memory at the cost of fewer distillation signals."
+        },
     )
     ce_loss_reweighting: bool = field(
         default=False,
@@ -405,6 +437,12 @@ class TrainingArguments:
             "help": "Enable FLEX (flash-ext friendly) packing algorithm for sequence data."
         },
     )
+    gradient_checkpointing: bool = field(
+        default=True,
+        metadata={
+            "help": "Enable gradient/activation checkpointing to trade compute for memory."
+        },
+    )
 
 
 def main():
@@ -476,7 +514,7 @@ def main():
     llm_config.layer_module = model_args.layer_module
     llm_config.qk_norm = model_args.llm_qk_norm
     llm_config.tie_word_embeddings = model_args.tie_word_embeddings
-    # llm_config.gradient_checkpointing = True
+    llm_config.gradient_checkpointing = training_args.gradient_checkpointing
 
     if training_args.finetune_from_hf:
         language_model = Qwen2ForCausalLM(llm_config)
@@ -595,13 +633,14 @@ def main():
     )
     ema_model = fsdp_ema_setup(ema_model, fsdp_config)
     fsdp_model = fsdp_wrapper(model, fsdp_config)
-    apply_activation_checkpointing(
-        fsdp_model,
-        checkpoint_wrapper_fn=functools.partial(
-            checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT
-        ),
-        check_fn=grad_checkpoint_check_fn,
-    )
+    if training_args.gradient_checkpointing:
+        apply_activation_checkpointing(
+            fsdp_model,
+            checkpoint_wrapper_fn=functools.partial(
+                checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT
+            ),
+            check_fn=grad_checkpoint_check_fn,
+        )
 
     if dist.get_rank() == 0:
         print(fsdp_model)
@@ -614,7 +653,7 @@ def main():
         lr=training_args.lr,
         betas=(training_args.beta1, training_args.beta2),
         eps=training_args.eps,
-        weight_decay=0,
+        weight_decay=training_args.weight_decay,
     )
     if training_args.lr_scheduler == "cosine":
         scheduler = get_cosine_with_min_lr_schedule_with_warmup(
@@ -649,6 +688,7 @@ def main():
         dataset_meta = yaml.safe_load(stream)
     dataset_config = DataConfig(grouped_datasets=dataset_meta)
     dataset_config.output_need_vit = data_args.output_need_vit
+    dataset_config.enable_distill = (training_args.distill_weight > 0)
     if training_args.visual_und:
         dataset_config.vit_patch_size = model_args.vit_patch_size
         dataset_config.max_num_patch_per_side = model_args.vit_max_num_patch_per_side
@@ -696,6 +736,7 @@ def main():
     logger.info(
         f"Training for {training_args.total_steps} steps, starting at {train_step}..."
     )
+    start_time = time.time()
     for curr_step, data in enumerate(train_loader, start=train_step):
         data = data.cuda(device).to_dict()
         data_indexes = data.pop("batch_data_indexes", None)
@@ -709,6 +750,8 @@ def main():
                         # If the current batch has no generation task, explicitly set to None
                         # The model internally handles the missing data["padded_latent"] case (loss mask is 0)
                         data["padded_latent"] = None
+            data["distill_mode"] = training_args.distill_mode
+            data["distill_layer_stride"] = training_args.distill_layer_stride
             loss_dict = fsdp_model(**data)
 
         loss = 0
